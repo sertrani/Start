@@ -57,6 +57,12 @@ Titolare/operatore autonoleggio (single admin: sertrani@gmail.com).
 - Filtri Storico: filtro per veicolo, tipo operazione e intervallo date sulla pagina Storico (/api/audit con parametri).
 - Testato: backend 71/71 pytest + flussi frontend e2e OK.
 
+## Implementato (2026-09-22, iterazione 5)
+- Badge campanello personalizzabile: settings.bell_days definisce quanti giorni di anticipo mostrare nel campanello (/api/notifications/today usa bell_days).
+- Filtro Storico per operatore: dropdown popolato da /api/audit/operators; /api/audit?user_email filtra chi ha fatto cosa.
+- Scheda PDF veicolo: /api/reports/vehicle/{id}/pdf con dati generali, polizza, storico bolli/collaudi e timeline operazioni (pulsante nella scheda storica).
+- Testato: backend 85/85 pytest + flussi frontend e2e OK.
+
 ## Backlog
-- P1: split di server.py in moduli; migrazione a lifespan handler (on_event deprecato).
-- P2: caching di notifications/today; TTL retention audit; restringere CORS a dominio esplicito.
+- P1: split di server.py in moduli; migrazione a lifespan handler (on_event deprecato); aggregazione unica per /audit/operators.
+- P2: caching notifications_today; TTL retention audit; Field(ge=0,le=365) su bell_days; restringere CORS a dominio esplicito.

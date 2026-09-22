@@ -1,0 +1,28 @@
+{
+  "summary": "Iteration 5 FleetCare — Bell days setting, Storico operator filter, Vehicle PDF. Backend pytest 14/14 new pass (test_iteration5.py) + full regression 85/85 pass across all iterations. Verified: GET/PUT /api/settings persist bell_days (7→45→restored); GET /api/notifications/today returns bell_days in payload and upcoming size grows with the window while count (overdue+today) stays constant; GET /api/audit/operators returns list of {email,name} including admin; GET /api/audit?user_email=sertrani@gmail.com narrows to admin-only entries; unknown email returns []; /api/reports/audit/excel accepts user_email; GET /api/reports/vehicle/{id}/pdf returns 200 application/pdf %PDF-magic for admin, 403 for operatore1@test.it (no export_reports), 404 for unknown id. Frontend Playwright (admin sertrani@gmail.com): /impostazioni bell-days-input fills 45 → PUT /api/settings body has bell_days:45 → toast 'Impostazioni salvate' shown → GET /api/settings returns 45; header notification-bell popover renders bell items respecting the window. /storico filter-operator dropdown populated with 10 operators including 'Titolare'; selecting admin issues GET /api/audit?user_email=... and filter-reset clears. Vehicle card history-button opens VehicleHistoryDialog; vehicle-pdf-button triggers download 'scheda_AU100DIT.pdf'. Limited user (operatore1@test.it/pass123, only manage_payments): opens history dialog but vehicle-pdf-button hidden (count=0), matching require('export_reports').",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration5.py",
+    "/app/test_reports/pytest/iteration5.xml",
+    "/app/test_reports/pytest/iteration5_all.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 1434 lines (up from 1324). The recommendation to split into modules (auth/users/vehicles/policy/audit/reports/notifications/storage) remains and is becoming more pressing.",
+    "vehicle_report_pdf imports reportlab classes inside the function on every request — acceptable for cold-start memory but adds ~ms overhead per call; consider top-level imports (already imported for other report endpoints).",
+    "/api/audit/operators does one find_one per distinct email to fetch user_name; for many operators this is O(N) roundtrips. Use a single aggregation ($group by user_email with $last: user_name) instead.",
+    "SettingsInput.bell_days has no explicit upper bound; a huge value (e.g. 3650) would still be accepted and iterate all vehicles ok, but consider Pydantic Field(ge=0, le=365).",
+    "notifications_today still recomputes over all vehicles per request — cache per-request or memoize briefly.",
+    "@app.on_event startup/shutdown still used (deprecated in FastAPI ≥0.109); migrate to lifespan handler."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration5.py (new — 14 tests)"
+  ],
+  "success_rate": {"backend": "100% (14/14 new, 85/85 total)", "frontend": "100% of tested flows"},
+  "test_credentials": "Admin sertrani@gmail.com / fleet2026 ; limited operatore1@test.it / pass123 (manage_payments only). No new persistent users created; bell_days modified during test and restored to 7.",
+  "seed_data_creation": "None persisted; bell_days temporarily changed to 45 then restored to 7.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "New iteration-5 selectors verified: bell-days-input (Impostazioni), filter-operator (Storico), vehicle-pdf-button (VehicleHistoryDialog). Login redirects to '/' (Flotta), not '/dashboard'. Save button text is 'Salva impostazioni'. Settings PUT body must include existing fields (company_name, notification_days, notification_recipients, bell_days); backend re-reads before update via update_settings. Admin has 10 distinct operators (many 'Limited Op' from earlier test users). Storico tbody rows are 0 in this env because the page uses a card list rather than a real table for the entries — count via [data-testid='audit-row-'] if needed."
+}
