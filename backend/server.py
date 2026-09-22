@@ -278,6 +278,7 @@ class VehicleInput(BaseModel):
     marca_modello: str
     data_immatricolazione: str
     bollo_scadenza: Optional[str] = None
+    note: Optional[str] = None
 
 class CollaudoInput(BaseModel):
     data_collaudo: str
@@ -617,7 +618,7 @@ async def get_vehicle(vehicle_id: str, user: dict = Depends(get_current_user)):
 @api_router.put("/vehicles/{vehicle_id}")
 async def update_vehicle(vehicle_id: str, input: VehicleInput, user: dict = Depends(require("manage_vehicles"))):
     v = await get_vehicle_or_404(vehicle_id)
-    prev = snapshot(v, ["targa", "marca_modello", "data_immatricolazione", "bollo_scadenza"])
+    prev = snapshot(v, ["targa", "marca_modello", "data_immatricolazione", "bollo_scadenza", "note"])
     upd = input.model_dump()
     upd["targa"] = upd["targa"].upper().strip()
     await db.vehicles.update_one({"id": vehicle_id}, {"$set": upd})
@@ -1075,6 +1076,9 @@ async def vehicle_report_pdf(vehicle_id: str, user: dict = Depends(require("expo
                            ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#F1F5F9")),
                            ("FONTSIZE", (0, 0), (-1, -1), 8), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
     elements += [Paragraph("Dati generali", styles["Heading3"]), t, Spacer(1, 0.3*cm)]
+    if view.get("note"):
+        elements += [Paragraph("Note", styles["Heading3"]),
+                     Paragraph(escape(view["note"]), small), Spacer(1, 0.3*cm)]
 
     def hist_table(title, header, rows):
         if not rows:

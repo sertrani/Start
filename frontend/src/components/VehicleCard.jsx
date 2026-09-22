@@ -10,6 +10,7 @@ import {
   CalendarClock,
   Paperclip,
   Clock,
+  StickyNote,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
@@ -71,6 +72,12 @@ export default function VehicleCard({ v, onEdit, onPolicy, onCollaudo, onDelete,
           <Row icon={CalendarClock} label="Rata intermedia" date={fmtDate(v.policy.scadenza_rata_intermedia)} state={v.policy.rata_state} />
         )}
         <Row icon={Receipt} label="Bollo (non blocca la circolazione)" date={v.bollo_scadenza ? fmtDate(v.bollo_scadenza) : "Non inserito"} state={v.bollo_state} />
+        {v.note && (
+          <div className="flex items-start gap-2 pt-2 border-t border-slate-100 mt-1" data-testid={`vehicle-note-${tid}`}>
+            <StickyNote className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+            <p className="text-xs text-slate-600 italic line-clamp-2">{v.note}</p>
+          </div>
+        )}
       </div>
 
       <div className="px-3 py-2.5 bg-slate-50 border-t border-slate-100 flex flex-wrap gap-1">

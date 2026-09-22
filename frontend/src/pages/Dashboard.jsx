@@ -38,6 +38,7 @@ const FILTERS = [
   { key: "all", label: "Tutti", testid: "fleet-status-filter-all" },
   { key: "can", label: "Può circolare", testid: "fleet-status-filter-can-circulate" },
   { key: "cannot", label: "Non può circolare", testid: "fleet-status-filter-cannot-circulate" },
+  { key: "expired", label: "Con scadenze scadute", testid: "fleet-status-filter-expired" },
   { key: "suspended", label: "Polizze sospese", testid: "fleet-status-filter-suspended" },
   { key: "bollo", label: "Bollo scaduto", testid: "fleet-status-filter-bollo" },
 ];
@@ -101,6 +102,14 @@ export default function Dashboard() {
     let list = vehicles;
     if (filter === "can") list = list.filter((v) => v.can_circulate);
     else if (filter === "cannot") list = list.filter((v) => !v.can_circulate);
+    else if (filter === "expired")
+      list = list.filter(
+        (v) =>
+          v.collaudo_state === "expired" ||
+          v.bollo_state === "expired" ||
+          v.insurance_state === "expired" ||
+          v.policy?.rata_state === "expired"
+      );
     else if (filter === "suspended") list = list.filter((v) => v.policy?.status === "suspended");
     else if (filter === "bollo") list = list.filter((v) => v.bollo_state === "expired");
     if (query.trim()) {

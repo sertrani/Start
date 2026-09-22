@@ -34,7 +34,8 @@ export default function NotificationBell() {
     api.get("/notifications/today").then((r) => setData(r.data)).catch(() => {});
   }, []);
 
-  const count = data?.count || 0;
+  const redCount = (data?.overdue?.length || 0) + (data?.today?.length || 0);
+  const yellowCount = data?.upcoming?.length || 0;
   const all = [...(data?.overdue || []), ...(data?.today || []), ...(data?.upcoming || [])];
 
   return (
@@ -42,9 +43,14 @@ export default function NotificationBell() {
       <PopoverTrigger asChild>
         <button className="relative p-2 rounded-lg hover:bg-slate-100 transition-colors" data-testid="notification-bell">
           <Bell className="h-5 w-5 text-slate-600" />
-          {count > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 h-5 min-w-[20px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center" data-testid="bell-badge">
-              {count > 99 ? "99+" : count}
+          {redCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 h-5 min-w-[20px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center" data-testid="bell-badge-red">
+              {redCount > 99 ? "99+" : redCount}
+            </span>
+          )}
+          {yellowCount > 0 && (
+            <span className="absolute -bottom-0.5 -right-0.5 h-4 min-w-[16px] px-1 rounded-full bg-amber-400 text-amber-950 text-[9px] font-bold flex items-center justify-center border border-white" data-testid="bell-badge-yellow">
+              {yellowCount > 99 ? "99+" : yellowCount}
             </span>
           )}
         </button>
@@ -52,7 +58,14 @@ export default function NotificationBell() {
       <PopoverContent align="end" className="w-80 p-0" data-testid="bell-popover">
         <div className="px-3 py-2.5 border-b border-slate-100">
           <p className="font-heading font-semibold text-slate-800 text-sm">Scadenze da attenzionare</p>
-          <p className="text-xs text-slate-500">{count} scadute o in giornata · prossimi 7 giorni inclusi</p>
+          <div className="flex items-center gap-3 mt-1.5">
+            <span className="flex items-center gap-1.5 text-xs font-medium text-red-600" data-testid="bell-count-red">
+              <span className="h-2.5 w-2.5 rounded-full bg-red-500" /> {redCount} scadute/oggi
+            </span>
+            <span className="flex items-center gap-1.5 text-xs font-medium text-amber-600" data-testid="bell-count-yellow">
+              <span className="h-2.5 w-2.5 rounded-full bg-amber-400" /> {yellowCount} in arrivo
+            </span>
+          </div>
         </div>
         <div className="max-h-80 overflow-y-auto divide-y divide-slate-50">
           {all.length === 0 ? (

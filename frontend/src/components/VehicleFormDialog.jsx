@@ -10,6 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import api, { apiErrorMessage } from "@/lib/api";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
@@ -21,6 +22,7 @@ export default function VehicleFormDialog({ open, onOpenChange, vehicle, onSaved
     marca_modello: vehicle?.marca_modello || "",
     data_immatricolazione: vehicle?.data_immatricolazione?.slice(0, 10) || "",
     bollo_scadenza: vehicle?.bollo_scadenza?.slice(0, 10) || "",
+    note: vehicle?.note || "",
   });
   const [loading, setLoading] = useState(false);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -34,6 +36,7 @@ export default function VehicleFormDialog({ open, onOpenChange, vehicle, onSaved
         marca_modello: form.marca_modello,
         data_immatricolazione: form.data_immatricolazione,
         bollo_scadenza: form.bollo_scadenza || null,
+        note: form.note || null,
       };
       if (editing) await api.put(`/vehicles/${vehicle.id}`, payload);
       else await api.post("/vehicles", payload);
@@ -72,6 +75,10 @@ export default function VehicleFormDialog({ open, onOpenChange, vehicle, onSaved
               <Label>Scadenza bollo</Label>
               <Input type="date" value={form.bollo_scadenza} onChange={set("bollo_scadenza")} data-testid="vehicle-bollo-input" />
             </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Note</Label>
+            <Textarea value={form.note} onChange={set("note")} placeholder="Note libere sul veicolo (visibili anche nella scheda PDF)…" rows={3} data-testid="vehicle-note-input" />
           </div>
           <DialogFooter>
             <Button type="submit" disabled={loading} data-testid="vehicle-save-button">
