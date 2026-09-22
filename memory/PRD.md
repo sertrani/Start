@@ -50,6 +50,13 @@ Titolare/operatore autonoleggio (single admin: sertrani@gmail.com).
 - Throttle anti-429 sull'invio digest.
 - Testato: backend 52/52 pytest + flussi frontend e2e OK.
 
+## Implementato (2026-09-22, iterazione 4)
+- Export Storico: report completo delle operazioni in Excel e PDF, filtrabile per veicolo e periodo (/api/reports/audit/excel|pdf).
+- Log accessi: ogni login viene registrato (utente, email, IP, data/ora); l'admin lo consulta in Impostazioni (/api/login-log).
+- Notifiche in-app: campanello in intestazione con badge (scadute + in giornata) e popover con scadute/oggi/prossimi 7 giorni (/api/notifications/today).
+- Filtri Storico: filtro per veicolo, tipo operazione e intervallo date sulla pagina Storico (/api/audit con parametri).
+- Testato: backend 71/71 pytest + flussi frontend e2e OK.
+
 ## Backlog
-- P1: retention/TTL per snapshot audit; grafici aggiuntivi.
-- P2: notifiche in-app; export storico; migrazione a lifespan handlers; split di server.py in moduli; restringere CORS a dominio esplicito.
+- P1: split di server.py in moduli; migrazione a lifespan handler (on_event deprecato).
+- P2: caching di notifications/today; TTL retention audit; restringere CORS a dominio esplicito.

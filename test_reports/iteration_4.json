@@ -1,0 +1,26 @@
+{
+  "summary": "Iteration 4 FleetCare — Notifiche in-app, Log accessi, Filtri Storico, Export Storico (Excel/PDF). Backend: 71/71 pytest pass (19 new in test_iteration4.py + 52 regression from prior iterations). Verified: GET /api/notifications/today returns {overdue, today, upcoming, count} with count == overdue+today, event objects contain vehicle_id/targa/type/label/date/days_left, unauth returns 401/403; GET /api/login-log admin lists rows with id/email/ts (no _id), a fresh login inserts a new entry (top-of-list changes), limited user (manage_payments only) gets 403; GET /api/audit filters — action=policy_renew returns only policy_renew rows, date_from=future returns []; vehicle_id filter narrows to that vehicle; GET /api/reports/audit/{excel,pdf} return 200 with correct content-types (openxml spreadsheet / %PDF-magic), work with filters, and return 403 for user without export_reports. Regression: /auth/me, /vehicles, /reports/excel, /reports/pdf all 200. Frontend Playwright (admin sertrani@gmail.com): NotificationBell renders in header, bell-badge shows '6', popover lists 6 items with bell-item-<vid>-<type> testids, 'Apri il calendario' navigates to /calendario. /storico shows storico-filters, storico-export-{excel,pdf} buttons; filter action='Rinnovo / nuova polizza' narrows 447→20 entries; filter-reset restores 447; date_from=2030-01-01 yields 0 entries. /impostazioni shows login-log-section with 27 login rows for admin. Limited user (operatore1@test.it/pass123 — only manage_payments): sees /storico list & filters but NO export buttons (correctly hidden), and login-log-section not visible in Impostazioni.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/test_reports/pytest/iteration4.xml",
+    "/app/test_reports/pytest/iteration4_all.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "build_audit_query date_to uses raw string concat '+00:00' — works because ts is stored ISO with tz; if ts format ever changes (naive UTC or Z-suffix), inclusive-day filter could silently drop the boundary day. Consider parsing to datetime and comparing typed.",
+    "server.py is now 1324 lines; earlier recommendation to split into modules (auth/users/vehicles/policy/audit/reports/notifications/storage) still applies.",
+    "notifications_today loops all vehicles and calls build_vehicle_view each request; fine at small fleet size but O(N) per bell mount and every page nav. Consider caching per-request or precomputing.",
+    "@app.on_event startup/shutdown still used (deprecated in FastAPI ≥0.109). Migrate to lifespan handler."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4.py (new — 19 tests)"
+  ],
+  "success_rate": {"backend": "100% (71/71)", "frontend": "100% of tested flows"},
+  "test_credentials": "Admin sertrani@gmail.com / fleet2026 ; limited operatore1@test.it / pass123 (manage_payments only). Ephemeral test_it4_lim_<rand>@test.it users created & deleted per session.",
+  "seed_data_creation": "None persisted; ephemeral limited user created via POST /api/users and deleted in fixture teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run: REACT_APP_BACKEND_URL=<url> python -m pytest /app/backend/tests/. Iteration 4 selectors verified: notification-bell, bell-badge, bell-popover, bell-item-<vid>-<type>, bell-view-calendar, storico-filters, filter-vehicle, filter-action, filter-date-from, filter-date-to, filter-reset, storico-export-excel, storico-export-pdf, login-log-section, login-log-<id>. Note: Select dropdown options in Storico filters need ~400ms wait after opening for animation. Excel content-type matches 'openxmlformats'."
+}
