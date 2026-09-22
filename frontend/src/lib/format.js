@@ -5,6 +5,11 @@ export function fmtDate(iso) {
   return d.toLocaleDateString("it-IT", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
+export function eur(v) {
+  if (v == null || v === "") return "—";
+  return new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" }).format(v);
+}
+
 export const POLICY_LABELS = {
   annuale: "Annuale",
   semestrale: "Semestrale",
@@ -14,17 +19,43 @@ export const POLICY_LABELS = {
   a_data_fissa: "A data fissa",
 };
 
+export const DOC_LABELS = {
+  libretto: "Libretto",
+  carta_circolazione: "Carta di circolazione",
+  polizza: "Polizza",
+  altro: "Altro",
+};
+
 export function stateBadge(state) {
   switch (state) {
     case "valid":
       return { label: "Regolare", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" };
     case "upcoming":
       return { label: "In scadenza", cls: "bg-yellow-50 text-yellow-800 border-yellow-200" };
+    case "grace":
+      return { label: "In comporto", cls: "bg-orange-50 text-orange-700 border-orange-200" };
     case "expired":
       return { label: "Scaduto", cls: "bg-red-50 text-red-700 border-red-200" };
     case "suspended":
       return { label: "Sospesa", cls: "bg-blue-50 text-blue-700 border-blue-200" };
     default:
       return { label: "N/D", cls: "bg-slate-100 text-slate-500 border-slate-200" };
+  }
+}
+
+export function stateCell(state) {
+  switch (state) {
+    case "valid":
+      return "bg-emerald-100 text-emerald-800 border-emerald-200";
+    case "upcoming":
+      return "bg-yellow-100 text-yellow-800 border-yellow-200";
+    case "grace":
+      return "bg-orange-100 text-orange-800 border-orange-200";
+    case "expired":
+      return "bg-red-100 text-red-800 border-red-200";
+    case "suspended":
+      return "bg-blue-100 text-blue-800 border-blue-200";
+    default:
+      return "bg-slate-50 text-slate-400 border-slate-200";
   }
 }

@@ -1,0 +1,9 @@
+crons:
+  - name: scadenze-digest
+    description: "Invia ogni mattina alle 07:00 (Europe/Rome) l'email di riepilogo delle scadenze imminenti della flotta"
+    cron: "0 7 * * *"
+    timezone: "Europe/Rome"
+    endpoint: "{{BASE_URL}}/api/cron/deadlines-digest"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true
