@@ -1,0 +1,174 @@
+{
+  "application_info": {
+    "name": "FleetCare Autonoleggio",
+    "subtitle": "Gestione Scadenze Flotta Veicoli",
+    "language": "Italian (it-IT)",
+    "app_type": "Dashboard / Business ERP",
+    "theme": "Light Theme (Clean & Professional)",
+    "primary_objective": "Controllo scadenze flotta (Bollo, Collaudo, Polizza) con indicatore di circolabilità immediata ed esportazione report"
+  },
+  "brand_and_identity": {
+    "archetype": "Swiss & High-Contrast Performance Pro (Light)",
+    "mood": "Professional, reliable, dense yet highly readable, tactile ERP elegance",
+    "tone_of_voice": "Direct, precise, administrative Italian"
+  },
+  "color_palette": {
+    "background_main": "#F8FAFC",
+    "background_card": "#FFFFFF",
+    "background_sidebar": "#0F172A",
+    "text_primary": "#0F172A",
+    "text_secondary": "#475569",
+    "text_muted": "#64748B",
+    "border_subtle": "#E2E8F0",
+    "border_hover": "#CBD5E1",
+    "primary_brand": "#2563EB",
+    "primary_brand_hover": "#1D4ED8",
+    "circulation_status": {
+      "can_circulate": {
+        "text": "PUÒ CIRCOLARE",
+        "bg": "#ECFDF5",
+        "border": "#A7F3D0",
+        "badge_color": "#059669",
+        "icon_color": "#10B981"
+      },
+      "cannot_circulate": {
+        "text": "NON PUÒ CIRCOLARE",
+        "bg": "#FFF1F2",
+        "border": "#FECDD3",
+        "badge_color": "#E11D48",
+        "icon_color": "#F43F5E"
+      }
+    },
+    "deadline_badges": {
+      "valid": {
+        "bg": "#F0FDF4",
+        "text": "#166534",
+        "border": "#BBF7D0",
+        "label": "Regolare"
+      },
+      "upcoming": {
+        "bg": "#FEFCE8",
+        "text": "#854D0E",
+        "border": "#FEF08A",
+        "label": "In Scadenza (<30 gg)"
+      },
+      "expired": {
+        "bg": "#FEF2F2",
+        "text": "#991B1B",
+        "border": "#FECACA",
+        "label": "Scaduto"
+      },
+      "suspended": {
+        "bg": "#EFF6FF",
+        "text": "#1E40AF",
+        "border": "#BFDBFE",
+        "label": "Polizza Sospesa"
+      }
+    }
+  },
+  "typography": {
+    "heading_font": "Plus Jakarta Sans, sans-serif",
+    "body_font": "Inter, sans-serif",
+    "targa_license_font": "JetBrains Mono, monospace",
+    "sizes": {
+      "hero_title": "text-3xl font-bold tracking-tight text-slate-900",
+      "section_title": "text-xl font-semibold text-slate-900",
+      "card_title": "text-lg font-medium text-slate-800",
+      "body": "text-sm text-slate-600",
+      "caption": "text-xs font-medium text-slate-500",
+      "targa": "text-sm font-mono font-bold uppercase tracking-wider bg-amber-300/20 text-slate-900 border border-amber-400/50 px-2 py-0.5 rounded"
+    }
+  },
+  "key_business_rules": {
+    "circulation_logic": {
+      "rule": "Un veicolo NON PUÒ CIRCOLARE se la Polizza Assicurativa è scaduta/sospesa OPPURE il Collaudo è scaduto.",
+      "critical_exception": "IL BOLLO NON INCIDE SULLA CIRCOLABILITÀ. Se il bollo è scaduto, il veicolo mostra un avviso amministrativo, ma PUÒ CIRCOLARE se collaudo e polizza sono regolari."
+    },
+    "collaudo_calculation_rules": {
+      "first_collaudo": "Fine mese del 4° anno successivo a quello di prima immatricolazione (es. immatricolata 15/05/2021 -> 1° collaudo entro 31/05/2025).",
+      "subsequent_collaudo": "Fine mese di ogni 2 anni rispetto all'ultimo collaudo (es. fatto 12/05/2023 -> successivo entro 31/05/2025)."
+    },
+    "insurance_suspension_rules": {
+      "max_suspension_months": 10,
+      "max_suspension_days": 304,
+      "tracking": "Calcolo automatico dei giorni effettivi di sospensione cumulati tra successive attivazioni e sospensioni.",
+      "auto_reactivation": "Se i giorni cumulati raggiungono 10 mesi (304 giorni), il sistema riattiva automaticamente la polizza e disabilita ulteriori sospensioni.",
+      "policy_types": ["annuale", "semestrale", "quadrimestrale", "trimestrale", "mensile", "a_data_fissa"]
+    }
+  },
+  "layout_and_components": {
+    "header_nav": {
+      "type": "Fixed/Sticky Header with Glassmorphism",
+      "classes": "sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200 px-6 py-3 flex items-center justify-between"
+    },
+    "sidebar": {
+      "type": "Dark slate navy sidebar with high contrast active states",
+      "classes": "w-64 bg-slate-900 text-slate-300 min-h-screen p-4 flex flex-col justify-between"
+    },
+    "dashboard_kpi_cards": {
+      "grid": "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6",
+      "items": [
+        "Totale Veicoli Flotta",
+        "Veicoli Idonei alla Circolazione (Può Circolare - VERDE)",
+        "Veicoli Fermo Flotta (Non Può Circolare - ROSSO)",
+        "Scadenze nei Prossimi 30 Giorni (Bolli / Collaudi / Rate)"
+      ]
+    },
+    "traffic_light_banner": {
+      "description": "Bender di sintesi visiva immediata 'A colpo d'occhio' in cima alla lista veicoli, con filtri rapidi: Tutti, Soltanto Circolabili, Non Circolabili, Sospesi, Bollo in Scadenza."
+    },
+    "vehicle_card_grid": {
+      "grid": "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6",
+      "features": [
+        "Header veicolo con Targa ben visibile in font Mono stile targa italiana",
+        "Badge stato circolazione GRANDE e CHIARO in alto a destra",
+        "3 Sezioni chiare: Bollo (con notifica se scaduto, senza bloccare la circolazione), Collaudo (con data e calcolo automatico), Assicurazione (con stato sospensione e contatore giorni)",
+        "Action bar: Dettaglio, Gestisci Polizza, Sospendi/Riattiva, Modifica"
+      ]
+    },
+    "insurance_modal_and_suspension_tracker": {
+      "features": [
+        "Form di inserimento ed editing polizza (Compagnia, Tipologia, Data Stipula, Scadenza Rata Intermedia, Scadenza Contratto)",
+        "Visualizzatore Giorni Sospensione con Progress Bar (0 / 304 Giorni - 10 Mesi max)",
+        "Registro storico delle sospensioni (Data Sospensione, Data Riattivazione, Giorni parziali, Giorni cumulati)",
+        "Avviso di blocco quando viene raggiunto il limite di 10 mesi"
+      ]
+    },
+    "reports_export_section": {
+      "features": [
+        "Esportazione Flotta completa in Excel (CSV)",
+        "Esportazione Scadenziario Mensile in PDF stampabile",
+        "Filtro per periodo, stato circolazione e tipologia scadenza"
+      ]
+    }
+  },
+  "image_urls": {
+    "fleet_hero_bg": "https://images.unsplash.com/photo-1772461355574-3fcd84c6016b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1NzZ8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBjYXJzJTIwZmxlZXQlMjB2ZWhpY2xlJTIwcmVudGFsJTIwcGFya2luZyUyMGxvdHxlbnwwfHx8fDE3OTAwODcyNzV8MA&ixlib=rb-4.1.0&q=85",
+    "fleet_parking_lot": "https://images.pexels.com/photos/5800943/pexels-photo-5800943.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+    "cars_garage": "https://images.unsplash.com/photo-1781692079343-67ea06495510?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1NzZ8MHwxfHNlYXJjaHwzfHxtb2Rlcm4lMjBjYXJzJTIwZmxlZXQlMjB2ZWhpY2xlJTIwcmVudGFsJTIwcGFya2luZyUyMGxvdHxlbnwwfHx8fDE3OTAwODcyNzV8MA&ixlib=rb-4.1.0&q=85"
+  },
+  "testing_attributes": {
+    "rule": "EVERY interactive element, button, card, status badge, input, tab, modal, and filter must have a descriptive kebab-case data-testid",
+    "examples": [
+      "data-testid=\"login-email-input\"",
+      "data-testid=\"login-submit-button\"",
+      "data-testid=\"fleet-status-filter-all\"",
+      "data-testid=\"fleet-status-filter-can-circulate\"",
+      "data-testid=\"fleet-status-filter-cannot-circulate\"",
+      "data-testid=\"vehicle-card-ab123cd\"",
+      "data-testid=\"circulation-badge-ab123cd\"",
+      "data-testid=\"toggle-suspension-button-ab123cd\"",
+      "data-testid=\"insurance-suspension-progress-bar\"",
+      "data-testid=\"export-excel-button\"",
+      "data-testid=\"export-pdf-button\""
+    ]
+  },
+  "instructions_to_main_agent": [
+    "1. Read all specs and business rules carefully.",
+    "2. Ensure the UI is 100% in Italian with natural technical Italian terminology (Targa, Marca, Modello, Scadenza Bollo, Collaudo / Revisione, Polizza Assicurativa, Rata Intermedia, Sospensione, Riattivazione, Può Circolare, NON Può Circolare).",
+    "3. Implement the circulation logic accurately: Circulation is prohibited ONLY if Collaudo or Assicurazione is expired or suspended. Expired Bollo generates a warning badge but vehicle remains 'PUÒ CIRCOLARE'.",
+    "4. Build the Insurance Suspension engine with exact cumulative day calculator (max 10 months / 304 days), progress bar, auto-reactivation, and prohibition of further suspension once max limit is reached.",
+    "5. Use standard React with Tailwind CSS, Lucide-react icons, and Shadcn UI components.",
+    "6. Ensure data-testid attributes are present on every key button, input, card, badge, and modal."
+  ]
+}

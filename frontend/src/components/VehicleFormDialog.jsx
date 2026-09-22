@@ -1,0 +1,124 @@
+import { useState } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import api, { apiErrorMessage } from "@/lib/api";
+import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
+
+export default function VehicleFormDialog({ open, onOpenChange, vehicle, onSaved }) {
+  const editing = !!vehicle;
+  const [form, setForm] = useState({
+    targa: vehicle?.targa || "",
+    marca_modello: vehicle?.marca_modello || "",
+    data_immatricolazione: vehicle?.data_immatricolazione?.slice(0, 10) || "",
+    bollo_scadenza: vehicle?.bollo_scadenza?.slice(0, 10) || "",
+    last_collaudo_date: vehicle?.last_collaudo_date?.slice(0, 10) || "",
+  });
+  const [loading, setLoading] = useState(false);
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const payload = {
+        targa: form.targa,
+        marca_modello: form.marca_modello,
+        data_immatricolazione: form.data_immatricolazione,
+        bollo_scadenza: form.bollo_scadenza || null,
+        last_collaudo_date: form.last_collaudo_date || null,
+      };
+      if (editing) await api.put(`/vehicles/${vehicle.id}`, payload);
+      else await api.post("/vehicles", payload);
+      toast.success(editing ? "Veicolo aggiornato" : "Veicolo aggiunto");
+      onSaved();
+      onOpenChange(false);
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md" data-testid="vehicle-form-dialog">
+        <DialogHeader>
+          <DialogTitle className="font-heading">
+            {editing ? "Modifica veicolo" : "Nuovo veicolo"}
+          </DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Targa</Label>
+            <Input
+              value={form.targa}
+              onChange={set("targa")}
+              placeholder="AB123CD"
+              className="uppercase font-targa"
+              required
+              data-testid="vehicle-targa-input"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Marca / Modello</Label>
+            <Input
+              value={form.marca_modello}
+              onChange={set("marca_modello")}
+              placeholder="Fiat Panda"
+              required
+              data-testid="vehicle-model-input"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Data prima immatricolazione</Label>
+            <Input
+              type="date"
+              value={form.data_immatricolazione}
+              onChange={set("data_immatricolazione")}
+              required
+              data-testid="vehicle-immatricolazione-input"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Scadenza bollo</Label>
+              <Input
+                type="date"
+                value={form.bollo_scadenza}
+                onChange={set("bollo_scadenza")}
+                data-testid="vehicle-bollo-input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Ultimo collaudo</Label>
+              <Input
+                type="date"
+                value={form.last_collaudo_date}
+                onChange={set("last_collaudo_date")}
+                data-testid="vehicle-lastcollaudo-input"
+              />
+            </div>
+          </div>
+          <p className="text-xs text-slate-500">
+            Lascia vuoto l'ultimo collaudo se il veicolo non è mai stato revisionato: il 1° collaudo
+            sarà calcolato a fine mese del 4° anno dall'immatricolazione.
+          </p>
+          <DialogFooter>
+            <Button type="submit" disabled={loading} data-testid="vehicle-save-button">
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Salva"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
