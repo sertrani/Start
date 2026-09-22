@@ -21,7 +21,6 @@ export default function VehicleFormDialog({ open, onOpenChange, vehicle, onSaved
     marca_modello: vehicle?.marca_modello || "",
     data_immatricolazione: vehicle?.data_immatricolazione?.slice(0, 10) || "",
     bollo_scadenza: vehicle?.bollo_scadenza?.slice(0, 10) || "",
-    last_collaudo_date: vehicle?.last_collaudo_date?.slice(0, 10) || "",
   });
   const [loading, setLoading] = useState(false);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -35,7 +34,6 @@ export default function VehicleFormDialog({ open, onOpenChange, vehicle, onSaved
         marca_modello: form.marca_modello,
         data_immatricolazione: form.data_immatricolazione,
         bollo_scadenza: form.bollo_scadenza || null,
-        last_collaudo_date: form.last_collaudo_date || null,
       };
       if (editing) await api.put(`/vehicles/${vehicle.id}`, payload);
       else await api.post("/vehicles", payload);
@@ -53,69 +51,28 @@ export default function VehicleFormDialog({ open, onOpenChange, vehicle, onSaved
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md" data-testid="vehicle-form-dialog">
         <DialogHeader>
-          <DialogTitle className="font-heading">
-            {editing ? "Modifica veicolo" : "Nuovo veicolo"}
-          </DialogTitle>
-          <DialogDescription>
-            Inserisci i dati identificativi del veicolo e le scadenze note.
-          </DialogDescription>
+          <DialogTitle className="font-heading">{editing ? "Modifica veicolo" : "Nuovo veicolo"}</DialogTitle>
+          <DialogDescription>Dati identificativi del veicolo. Il collaudo si gestisce dalla scheda dedicata.</DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-4">
           <div className="space-y-1.5">
             <Label>Targa</Label>
-            <Input
-              value={form.targa}
-              onChange={set("targa")}
-              placeholder="AB123CD"
-              className="uppercase font-targa"
-              required
-              data-testid="vehicle-targa-input"
-            />
+            <Input value={form.targa} onChange={set("targa")} placeholder="AB123CD" className="uppercase font-targa" required data-testid="vehicle-targa-input" />
           </div>
           <div className="space-y-1.5">
             <Label>Marca / Modello</Label>
-            <Input
-              value={form.marca_modello}
-              onChange={set("marca_modello")}
-              placeholder="Fiat Panda"
-              required
-              data-testid="vehicle-model-input"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Data prima immatricolazione</Label>
-            <Input
-              type="date"
-              value={form.data_immatricolazione}
-              onChange={set("data_immatricolazione")}
-              required
-              data-testid="vehicle-immatricolazione-input"
-            />
+            <Input value={form.marca_modello} onChange={set("marca_modello")} placeholder="Fiat Panda" required data-testid="vehicle-model-input" />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label>Scadenza bollo</Label>
-              <Input
-                type="date"
-                value={form.bollo_scadenza}
-                onChange={set("bollo_scadenza")}
-                data-testid="vehicle-bollo-input"
-              />
+              <Label>Immatricolazione</Label>
+              <Input type="date" value={form.data_immatricolazione} onChange={set("data_immatricolazione")} required data-testid="vehicle-immatricolazione-input" />
             </div>
             <div className="space-y-1.5">
-              <Label>Ultimo collaudo</Label>
-              <Input
-                type="date"
-                value={form.last_collaudo_date}
-                onChange={set("last_collaudo_date")}
-                data-testid="vehicle-lastcollaudo-input"
-              />
+              <Label>Scadenza bollo</Label>
+              <Input type="date" value={form.bollo_scadenza} onChange={set("bollo_scadenza")} data-testid="vehicle-bollo-input" />
             </div>
           </div>
-          <p className="text-xs text-slate-500">
-            Lascia vuoto l'ultimo collaudo se il veicolo non è mai stato revisionato: il 1° collaudo
-            sarà calcolato a fine mese del 4° anno dall'immatricolazione.
-          </p>
           <DialogFooter>
             <Button type="submit" disabled={loading} data-testid="vehicle-save-button">
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Salva"}

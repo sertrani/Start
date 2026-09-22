@@ -4,7 +4,8 @@ import api from "@/lib/api";
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null); // null = checking, false = anon, object = logged
+  const [user, setUser] = useState(null);
+
   useEffect(() => {
     const token = localStorage.getItem("fc_token");
     if (!token) {
@@ -34,8 +35,18 @@ export function AuthProvider({ children }) {
     setUser(false);
   };
 
+  const refreshUser = async () => {
+    try {
+      const res = await api.get("/auth/me");
+      setUser(res.data);
+    } catch (e) {}
+  };
+
+  const hasPerm = (perm) =>
+    !!user && (user.role === "admin" || (user.permissions || []).includes(perm));
+
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
+    <AuthContext.Provider value={{ user, login, logout, hasPerm, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

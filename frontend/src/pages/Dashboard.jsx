@@ -13,12 +13,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { useAuth } from "@/context/AuthContext";
 import VehicleCard from "@/components/VehicleCard";
 import VehicleFormDialog from "@/components/VehicleFormDialog";
 import PolicyDialog from "@/components/PolicyDialog";
 import CollaudoDialog from "@/components/CollaudoDialog";
 import DocumentsDialog from "@/components/DocumentsDialog";
 import BolloDialog from "@/components/BolloDialog";
+import VehicleHistoryDialog from "@/components/VehicleHistoryDialog";
 import {
   Car,
   Plus,
@@ -62,6 +64,7 @@ function Kpi({ icon: Icon, label, value, tone, testid }) {
 }
 
 export default function Dashboard() {
+  const { hasPerm } = useAuth();
   const [vehicles, setVehicles] = useState([]);
   const [stats, setStats] = useState(null);
   const [filter, setFilter] = useState("all");
@@ -74,6 +77,7 @@ export default function Dashboard() {
   const [collaudoVehicle, setCollaudoVehicle] = useState(null);
   const [docsVehicle, setDocsVehicle] = useState(null);
   const [bolloVehicle, setBolloVehicle] = useState(null);
+  const [historyVehicle, setHistoryVehicle] = useState(null);
   const [deleteVehicle, setDeleteVehicle] = useState(null);
 
   const load = async () => {
@@ -154,21 +158,27 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => download("excel")} data-testid="export-excel-button">
-            <FileSpreadsheet className="h-4 w-4 mr-1.5" /> Excel
-          </Button>
-          <Button variant="outline" onClick={() => download("pdf")} data-testid="export-pdf-button">
-            <FileText className="h-4 w-4 mr-1.5" /> PDF
-          </Button>
-          <Button
-            onClick={() => {
-              setEditVehicle(null);
-              setFormOpen(true);
-            }}
-            data-testid="add-vehicle-button"
-          >
-            <Plus className="h-4 w-4 mr-1.5" /> Veicolo
-          </Button>
+          {hasPerm("export_reports") && (
+            <>
+              <Button variant="outline" onClick={() => download("excel")} data-testid="export-excel-button">
+                <FileSpreadsheet className="h-4 w-4 mr-1.5" /> Excel
+              </Button>
+              <Button variant="outline" onClick={() => download("pdf")} data-testid="export-pdf-button">
+                <FileText className="h-4 w-4 mr-1.5" /> PDF
+              </Button>
+            </>
+          )}
+          {hasPerm("manage_vehicles") && (
+            <Button
+              onClick={() => {
+                setEditVehicle(null);
+                setFormOpen(true);
+              }}
+              data-testid="add-vehicle-button"
+            >
+              <Plus className="h-4 w-4 mr-1.5" /> Veicolo
+            </Button>
+          )}
         </div>
       </div>
 
@@ -227,6 +237,7 @@ export default function Dashboard() {
               onCollaudo={setCollaudoVehicle}
               onDocs={setDocsVehicle}
               onBollo={setBolloVehicle}
+              onHistory={setHistoryVehicle}
               onDelete={setDeleteVehicle}
             />
           ))}
@@ -247,6 +258,9 @@ export default function Dashboard() {
       )}
       {bolloVehicle && (
         <BolloDialog open={!!bolloVehicle} onOpenChange={(o) => !o && setBolloVehicle(null)} vehicle={bolloVehicle} onSaved={refresh} />
+      )}
+      {historyVehicle && (
+        <VehicleHistoryDialog open={!!historyVehicle} onOpenChange={(o) => !o && setHistoryVehicle(null)} vehicle={historyVehicle} />
       )}
 
       <AlertDialog open={!!deleteVehicle} onOpenChange={(o) => !o && setDeleteVehicle(null)}>

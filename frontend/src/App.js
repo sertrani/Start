@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
@@ -10,13 +10,12 @@ import Dashboard from "@/pages/Dashboard";
 import Calendar from "@/pages/Calendar";
 import Monitor from "@/pages/Monitor";
 import Settings from "@/pages/Settings";
+import Storico from "@/pages/Storico";
 
 function ProtectedRoute({ children }) {
   const { user } = useAuth();
   if (user === null)
-    return (
-      <div className="min-h-screen flex items-center justify-center text-slate-500">Caricamento…</div>
-    );
+    return <div className="min-h-screen flex items-center justify-center text-slate-500">Caricamento…</div>;
   if (!user) return <Navigate to="/login" replace />;
   return children;
 }
@@ -38,6 +37,7 @@ function AppRoutes() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/calendario" element={<Calendar />} />
         <Route path="/monitor" element={<Monitor />} />
+        <Route path="/storico" element={<Storico />} />
         <Route path="/impostazioni" element={<Settings />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
