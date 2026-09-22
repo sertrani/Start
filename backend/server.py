@@ -93,6 +93,15 @@ MIME_TYPES = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
               "gif": "image/gif", "webp": "image/webp", "pdf": "application/pdf"}
 ALLOWED_DOC_EXT = {"pdf", "jpg", "jpeg", "png", "webp"}
 
+def is_valid_image_bytes(data: bytes) -> bool:
+    try:
+        from PIL import Image as PILImage
+        im = PILImage.open(io.BytesIO(data))
+        im.load()
+        return True
+    except Exception:
+        return False
+
 # ---------------- Email ----------------
 EMAIL_BASE_URL = "https://integrations.emergentagent.com"
 EMAIL_KEY = os.environ.get("EMERGENT_EMAIL_KEY")
@@ -643,6 +652,8 @@ async def upload_logo(file: UploadFile = File(...), user: dict = Depends(get_cur
     if ext not in {"png", "jpg", "jpeg", "webp"}:
         raise HTTPException(status_code=400, detail="Il logo deve essere PNG, JPG o WEBP")
     data = await file.read()
+    if not is_valid_image_bytes(data):
+        raise HTTPException(status_code=400, detail="File immagine non valido o corrotto")
     path = f"{APP_NAME}/branding/logo.{ext}"
     ct = MIME_TYPES.get(ext, "image/png")
     result = put_object(path, data, ct)
@@ -744,6 +755,8 @@ async def report_excel(user: dict = Depends(get_current_user)):
     if settings.get("logo_path"):
         try:
             content, _ = get_object(settings["logo_path"])
+            if not is_valid_image_bytes(content):
+                raise ValueError("logo non valido")
             img = XLImage(io.BytesIO(content))
             img.height = 48; img.width = 48
             ws.add_image(img, "A1")
@@ -790,7 +803,8 @@ async def report_pdf(user: dict = Depends(get_current_user)):
     if settings.get("logo_path"):
         try:
             content, _ = get_object(settings["logo_path"])
-            elements.append(Image(io.BytesIO(content), width=1.6*cm, height=1.6*cm))
+            if is_valid_image_bytes(content):
+                elements.append(Image(io.BytesIO(content), width=1.6*cm, height=1.6*cm))
         except Exception as e:
             logger.warning(f"logo pdf skip: {e}")
     elements += [Paragraph(settings.get("company_name", "FleetCare Autonoleggio"), styles["Title"]),

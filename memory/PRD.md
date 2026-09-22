@@ -26,6 +26,19 @@ Titolare/operatore autonoleggio (single admin: sertrani@gmail.com).
 - Export Excel (.xlsx) e PDF (scadenziario).
 - Testato: backend 13/13 pytest, frontend e2e OK.
 
+## Implementato (2026-09-22, iterazione 2)
+- Avvisi email (Resend gestito) a destinatari configurabili + cron giornaliero 07:00 Europe/Rome (`.emergent/crons.yml`, endpoint protetto da WEBHOOK_CRON_SECRET). Invio manuale "Invia riepilogo ora".
+- Documenti veicolo (libretto/carta circolazione/polizza) PDF+immagini su object storage; upload/visualizza/elimina.
+- Calendario scadenze mensile (chip colorati per stato, navigazione mesi).
+- Monitor flotta: heatmap tabellare per veicolo/tipo scadenza colorata per stato.
+- Storico pagamenti bollo per veicolo + aggiornamento scadenza.
+- Personalizzazione logo (header + report Excel/PDF) e nome azienda.
+- Importi polizza (premio totale, importo rata).
+- Periodo di comporto assicurativo 15 gg: automatico per annuale/semestrale, opzionale (checkbox) per le altre tipologie; estende la circolabilità effettiva.
+- Hardening report PDF/Excel contro logo corrotti (validazione PIL).
+- Testato: backend 18/18 pytest + flussi frontend e2e OK.
+
 ## Backlog
-- P1: notifiche email scadenze (Resend), viste/ordinamento avanzato, storico bolli.
-- P2: multi-utente/ruoli, allegati documenti (object storage), grafici scadenziario.
+- P1: grafici riepilogativi (torta/barre) nel monitor, ordinamento avanzato.
+- P2: multi-utente/ruoli, notifiche in-app, archiviazione storica scadenze.
+- Nota tecnica: CORS attualmente '*'; migrare a lifespan handlers (deprecato on_event).

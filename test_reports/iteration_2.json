@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 2 comprehensive testing of new FleetCare features. Backend: 18/18 pytest tests pass in /app/backend/tests/test_new_features.py (settings CRUD, logo upload, notifications preview + send-now returning sent>=1, cron endpoint auth 401/401/200, document upload+view+delete with auth-gated file download, invalid extension rejection, bollo history add+delete + bollo_scadenza update, insurance amounts + grace period auto for annuale, expired-past-grace blocking, mensile no-grace vs optional-grace behavior, deadlines shape, reports xlsx+pdf 200). Frontend (Playwright): login, top nav (Flotta/Calendario/Monitor/Impostazioni) all present, Settings save + Invia riepilogo ora, Calendar month navigation (Settembre 2026 -> Ottobre 2026), Monitor table with 3 rows and search filter (3->1), Documents dialog and Bollo dialog open with all data-testids, Bollo add (1->2 items) + delete (2->1) works.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/reports/pdf", "issue": "Endpoint returns 500 if the stored logo image is corrupt/unreadable by PIL. The try/except around Image() creation in server.py:791-795 does not catch errors raised later during doc.build() (reportlab lazy-decodes images). A corrupt/truncated logo will crash all PDF reports. Recommend: pre-validate logo bytes with PIL.Image.open(...).verify() before adding to elements, or wrap the whole doc.build() call in try/except with a fallback that removes the logo and rebuilds. Excel endpoint has same latent risk (openpyxl handled the truncated PNG in my test but that isn't guaranteed)."},
+      {"endpoint": "CORS", "issue": "Still allow_origins='*' with allow_credentials=True (carried over from iteration_1). Browsers reject credentialed cross-origin cookie requests under this config."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Settings", "issues": ["Uploaded logo appears blank/small when logo file has issues; AuthImage silently fails without a fallback placeholder swap"]},
+      {"screen": "Dialogs", "issues": ["Prior iteration Radix a11y DialogDescription note - PolicyDialog now includes DialogDescription; verify same for DocumentsDialog and BolloDialog."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_new_features.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Harden /api/reports/pdf against invalid stored logos: validate image bytes before use OR wrap doc.build() and retry without logo on failure.",
+    "Same hardening advisable for /api/reports/excel.",
+    "Tighten CORS_ORIGINS to an explicit domain list; wildcard with credentials is spec-invalid.",
+    "Optional: AuthImage should render a placeholder on load error so a bad logo does not appear blank."
+  ],
+  "critical_code_review_comments": [
+    "server.py PDF endpoint: try/except only guards Image(io.BytesIO(...)) but reportlab decodes lazily during doc.build(); an OSError from PIL then bubbles up as 500. Move guard to include doc.build() or verify image up-front.",
+    "server.py:308 grace_end computed only if grace applies; base_state used before checking grace can cause slight inconsistency for suspended-then-expired flows, but current tests pass.",
+    "server.py uses deprecated @app.on_event startup/shutdown; migrate to lifespan handler (already flagged in iter 1)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_new_features.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "success_rate": {"backend": "100% (18/18)", "frontend": "100% of tested flows"},
+  "test_credentials": "sertrani@gmail.com / fleet2026 ; WEBHOOK_CRON_SECRET=fc_cron_9b2a7f4e1d6c8350a1e2f7b9c4d80a63 ; email recipient delivered@resend.dev",
+  "seed_data_creation": "Test vehicles prefixed TEST_ (GR01-GR04, NF01, CAP304, etc.). All cleaned up in fixtures. Logo re-uploaded with valid 64x64 PNG so /reports/pdf works.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run: python -m pytest /app/backend/tests/test_new_features.py /app/backend/tests/backend_test.py -v. Pod date is Sept 2026 (calendar shows Settembre 2026). If /reports/pdf ever returns 500, first check settings.logo_path integrity via GET /api/settings and re-upload a valid PNG.",
+  "rca of the issue": "PDF endpoint 500 (encountered once during my session) RCA: a small/truncated PNG uploaded via /api/settings/logo is stored fine and returned by object storage, but PIL raises 'broken data stream when reading image file' during reportlab's lazy decode in doc.build(). Current try/except at server.py:791-795 wraps only Image() construction, not the later .build(). Mitigation applied for testing: re-uploaded a valid 64x64 PNG. Fix suggested: guard the whole PDF build (and remove logo on failure) or verify image bytes at upload time with PIL.Image.open(BytesIO(data)).verify()."
+}
