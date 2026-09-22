@@ -278,7 +278,7 @@ class VehicleInput(BaseModel):
     marca_modello: str
     data_immatricolazione: str
     bollo_scadenza: Optional[str] = None
-    note: Optional[str] = None
+    note: Optional[str] = Field(None, max_length=2000)
 
 class CollaudoInput(BaseModel):
     data_collaudo: str
@@ -303,7 +303,7 @@ class SettingsInput(BaseModel):
     company_name: Optional[str] = None
     notification_recipients: List[str] = []
     notification_days: NotificationDays = NotificationDays()
-    bell_days: int = 7
+    bell_days: int = Field(7, ge=0, le=365)
 
 class UserCreate(BaseModel):
     email: EmailStr

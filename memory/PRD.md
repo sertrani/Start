@@ -63,6 +63,12 @@ Titolare/operatore autonoleggio (single admin: sertrani@gmail.com).
 - Scheda PDF veicolo: /api/reports/vehicle/{id}/pdf con dati generali, polizza, storico bolli/collaudi e timeline operazioni (pulsante nella scheda storica).
 - Testato: backend 85/85 pytest + flussi frontend e2e OK.
 
+## Implementato (2026-09-22, iterazione 6)
+- Filtro rapido "Con scadenze scadute" nella Flotta (veicoli con almeno una scadenza già scaduta).
+- Campanello a colori: conteggio separato rosso (scadute/oggi) e giallo (in arrivo) con doppio badge.
+- Note libere per veicolo (max 2000 caratteri), visibili sulla card e nella scheda PDF del veicolo.
+- Testato: backend 11/11 nuovi test (94/96 totali; 2 fallimenti solo per race su impostazione condivisa in parallelo, non bug di prodotto).
+
 ## Backlog
-- P1: split di server.py in moduli; migrazione a lifespan handler (on_event deprecato); aggregazione unica per /audit/operators.
-- P2: caching notifications_today; TTL retention audit; Field(ge=0,le=365) su bell_days; restringere CORS a dominio esplicito.
+- P1: split di server.py in moduli; migrazione a lifespan handler; serializzare i test su bell_days.
+- P2: caching notifications_today; TTL retention audit; restringere CORS a dominio esplicito.

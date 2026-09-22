@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 6 FleetCare — Filtro rapido scadute, Bell colori rosso/giallo, Note veicolo. Backend pytest 11/11 pass (test_iteration6.py). Full regression 94/96 pass — the 2 failures are BOTH races on shared setting bell_days between test_iteration5 and test_iteration6 running in parallel (xdist gw0 vs gw1 both mutate /api/settings.bell_days); each file runs green in isolation. Not a product bug. Verified: GET /api/notifications/today returns {overdue, today, upcoming, bell_days, count} with count == len(overdue)+len(today); bell_days change alters len(upcoming) only, not overdue/today/count. PUT /api/vehicles/{id} persists note (round-trip verified via GET /api/vehicles). Creating a vehicle without note returns note=null. Per-vehicle PDF GET /api/reports/vehicle/{id}/pdf grows in bytes when note is set vs empty (Note section is rendered). Frontend Playwright (admin): Flotta shows chip data-testid='fleet-status-filter-expired'. Total cards=5; clicking expired filter reduces to 4 and every remaining card contains at least one 'Scaduto' badge; reset via fleet-status-filter-all works. Header notification-bell shows bell-badge-red='6' (yellow badge hidden because 0 upcoming, correct); popover contains bell-count-red '6 scadute/oggi' and bell-count-yellow '0 in arrivo'. Clicking a bell-item navigates (still routes to app; popover closes). Vehicle AU100DIT shows vehicle-note-<id8> on card with 'Veicolo a noleggio lungo termine - cliente Rossi'. Edit dialog (edit-vehicle-button-<id8>) opens vehicle-note-input (Textarea) with existing value; changing → Salva → toast 'Veicolo aggiornato' → card note updates immediately; reverted successfully. History dialog opens and vehicle-pdf-button is present for admin.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration6.py",
+    "/app/test_reports/pytest/iteration6.xml",
+    "/app/test_reports/pytest/iteration6_all.xml"
+  ],
+  "action_items": [
+    "Note: the review request describes the edit button selector as 'edit-vehicle-button' but implementation uses per-vehicle suffix 'edit-vehicle-button-<id8>' (VehicleCard.jsx L108). Not a bug — but worth aligning docs/tests. Same pattern for vehicle-note-<id8> is already correct.",
+    "Minor test flakiness: test_iteration5.TestBellDays.test_update_bell_days_persists_and_reflects_in_notifications and test_iteration6.TestNotificationsSplit.test_bell_days_window_affects_upcoming_only cannot safely run in parallel (both write /api/settings.bell_days). Consider serializing them via pytest markers or a lock, OR run pytest with -p no:xdist / --dist=loadfile for these files."
+  ],
+  "critical_code_review_comments": [
+    "server.py now ~1438 lines — split recommendation still open (auth/users/vehicles/policy/audit/reports/notifications).",
+    "VehicleInput.note has no length cap; consider Field(max_length=1000) to avoid unbounded PDF text.",
+    "notifications_today still recomputes over the entire fleet on every request; unchanged from iter5.",
+    "PDF rendering imports reportlab classes inside function per call — unchanged from iter5.",
+    "@app.on_event startup/shutdown still deprecated (FastAPI ≥0.109); migrate to lifespan handler."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration6.py (new — 11 tests)"
+  ],
+  "success_rate": {
+    "backend": "100% new (11/11); overall 94/96 (2 known parallel-race failures on shared settings, not product bugs)",
+    "frontend": "100% of tested flows (expired filter, bell red/yellow counts+popover, note edit/persist/display, PDF button)"
+  },
+  "test_credentials": "Admin sertrani@gmail.com / fleet2026. Limited operatore1@test.it / pass123.",
+  "seed_data_creation": "None persisted. AU100DIT note temporarily modified during UI test and reverted to original 'Veicolo a noleggio lungo termine - cliente Rossi'. bell_days modified during backend test and restored.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "New iter-6 testids verified: fleet-status-filter-expired, bell-badge-red, bell-badge-yellow, bell-count-red, bell-count-yellow, vehicle-note-input, vehicle-note-<id8>. Vehicle edit button uses per-id suffix: edit-vehicle-button-<id8> (VehicleCard.jsx L108) — NOT plain 'edit-vehicle-button' as review request said. Yellow badge is only rendered when upcoming>0 (bell_days=7 default → currently 0 upcoming, so yellow badge hidden but popover counter still visible with value 0). Notifications endpoint returns count=overdue+today (red count); yellow count = len(upcoming). To force yellow badge visibility in future tests, PUT bell_days=60 first."
+}
