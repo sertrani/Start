@@ -6,7 +6,9 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import api, { apiErrorMessage } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { fmtDate } from "@/lib/format";
 import {
@@ -20,6 +22,7 @@ import {
   Trash2,
   Undo2,
   RefreshCw,
+  FileText,
 } from "lucide-react";
 
 const ICON = {
@@ -38,6 +41,7 @@ const ICON = {
 };
 
 export default function VehicleHistoryDialog({ open, onOpenChange, vehicle }) {
+  const { hasPerm } = useAuth();
   const [entries, setEntries] = useState(null);
 
   useEffect(() => {
@@ -48,6 +52,21 @@ export default function VehicleHistoryDialog({ open, onOpenChange, vehicle }) {
       .catch((e) => toast.error(apiErrorMessage(e)));
   }, [vehicle]);
 
+  const downloadPdf = async () => {
+    try {
+      const res = await api.get(`/reports/vehicle/${vehicle.id}/pdf`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `scheda_${vehicle.targa}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Scheda PDF generata");
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto" data-testid="vehicle-history-dialog">
@@ -57,6 +76,11 @@ export default function VehicleHistoryDialog({ open, onOpenChange, vehicle }) {
           </DialogTitle>
           <DialogDescription>Tutte le operazioni con data, operatore e ricalcolo scadenze.</DialogDescription>
         </DialogHeader>
+        {hasPerm("export_reports") && (
+          <Button variant="outline" onClick={downloadPdf} className="w-full" data-testid="vehicle-pdf-button">
+            <FileText className="h-4 w-4 mr-1.5" /> Scarica scheda PDF completa
+          </Button>
+        )}
         {entries === null ? (
           <p className="text-center text-slate-400 py-6">Caricamento…</p>
         ) : entries.length === 0 ? (

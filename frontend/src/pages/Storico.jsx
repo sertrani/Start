@@ -25,13 +25,15 @@ export default function Storico() {
   const { hasPerm } = useAuth();
   const [entries, setEntries] = useState([]);
   const [vehicles, setVehicles] = useState([]);
+  const [operators, setOperators] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState({ vehicle_id: ALL, action: ALL, date_from: "", date_to: "" });
+  const [filters, setFilters] = useState({ vehicle_id: ALL, action: ALL, user_email: ALL, date_from: "", date_to: "" });
 
   const params = useMemo(() => {
     const p = { limit: 500 };
     if (filters.vehicle_id !== ALL) p.vehicle_id = filters.vehicle_id;
     if (filters.action !== ALL) p.action = filters.action;
+    if (filters.user_email !== ALL) p.user_email = filters.user_email;
     if (filters.date_from) p.date_from = filters.date_from;
     if (filters.date_to) p.date_to = filters.date_to;
     return p;
@@ -51,6 +53,7 @@ export default function Storico() {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [params]);
   useEffect(() => { api.get("/vehicles").then((r) => setVehicles(r.data)).catch(() => {}); }, []);
+  useEffect(() => { api.get("/audit/operators").then((r) => setOperators(r.data)).catch(() => {}); }, []);
 
   const undo = async (id) => {
     try {
@@ -77,7 +80,7 @@ export default function Storico() {
     }
   };
 
-  const reset = () => setFilters({ vehicle_id: ALL, action: ALL, date_from: "", date_to: "" });
+  const reset = () => setFilters({ vehicle_id: ALL, action: ALL, user_email: ALL, date_from: "", date_to: "" });
 
   return (
     <div className="space-y-5">
@@ -98,7 +101,7 @@ export default function Storico() {
         )}
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 grid grid-cols-1 sm:grid-cols-4 gap-3 items-end" data-testid="storico-filters">
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end" data-testid="storico-filters">
         <div className="space-y-1.5">
           <Label className="text-xs flex items-center gap-1"><Filter className="h-3 w-3" /> Veicolo</Label>
           <Select value={filters.vehicle_id} onValueChange={(v) => setFilters({ ...filters, vehicle_id: v })}>
@@ -119,6 +122,18 @@ export default function Storico() {
               <SelectItem value={ALL}>Tutte le operazioni</SelectItem>
               {Object.entries(ACTION_LABELS).map(([k, v]) => (
                 <SelectItem key={k} value={k}>{v}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Operatore</Label>
+          <Select value={filters.user_email} onValueChange={(v) => setFilters({ ...filters, user_email: v })}>
+            <SelectTrigger data-testid="filter-operator"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>Tutti gli operatori</SelectItem>
+              {operators.map((o) => (
+                <SelectItem key={o.email} value={o.email}>{o.name}</SelectItem>
               ))}
             </SelectContent>
           </Select>

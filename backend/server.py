@@ -302,6 +302,7 @@ class SettingsInput(BaseModel):
     company_name: Optional[str] = None
     notification_recipients: List[str] = []
     notification_days: NotificationDays = NotificationDays()
+    bell_days: int = 7
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -463,12 +464,14 @@ async def get_settings() -> dict:
     s = await db.settings.find_one({"key": "app"})
     if not s:
         s = {"key": "app", "company_name": "FleetCare Autonoleggio", "notification_recipients": [],
-             "notification_days": {"bollo": 30, "collaudo": 30, "polizza": 30}, "logo_path": None}
+             "notification_days": {"bollo": 30, "collaudo": 30, "polizza": 30}, "bell_days": 7, "logo_path": None}
         await db.settings.insert_one(dict(s))
     s.pop("_id", None)
     if "notification_days" not in s:
         legacy = s.get("notification_days_before", 30)
         s["notification_days"] = {"bollo": legacy, "collaudo": legacy, "polizza": legacy}
+    if "bell_days" not in s:
+        s["bell_days"] = 7
     return s
 
 # ---------------- Audit ----------------
@@ -829,21 +832,24 @@ async def download_file(path: str, authorization: str = Header(None), auth: str 
 # ---------------- Audit / history ----------------
 @api_router.get("/audit")
 async def list_audit(vehicle_id: Optional[str] = Query(None), action: Optional[str] = Query(None),
+                     user_email: Optional[str] = Query(None),
                      date_from: Optional[str] = Query(None), date_to: Optional[str] = Query(None),
                      limit: int = Query(300), user: dict = Depends(get_current_user)):
-    q = build_audit_query(vehicle_id, action, date_from, date_to)
+    q = build_audit_query(vehicle_id, action, date_from, date_to, user_email)
     entries = await db.audit.find(q).sort("ts", -1).to_list(min(limit, 2000))
     for e in entries:
         e.pop("_id", None)
         e.pop("restore", None)
     return entries
 
-def build_audit_query(vehicle_id, action, date_from, date_to):
+def build_audit_query(vehicle_id, action, date_from, date_to, user_email=None):
     q = {}
     if vehicle_id:
         q["vehicle_id"] = vehicle_id
     if action:
         q["action"] = action
+    if user_email:
+        q["user_email"] = user_email
     if date_from or date_to:
         rng = {}
         if date_from:
@@ -901,6 +907,8 @@ async def login_log(limit: int = Query(200), user: dict = Depends(require("manag
 
 @api_router.get("/notifications/today")
 async def notifications_today(user: dict = Depends(get_current_user)):
+    settings = await get_settings()
+    bell_days = settings.get("bell_days", 7)
     vehicles = await db.vehicles.find().to_list(2000)
     today = datetime.now(timezone.utc).date()
     overdue, due_today, upcoming = [], [], []
@@ -917,29 +925,41 @@ async def notifications_today(user: dict = Depends(get_current_user)):
                 overdue.append(ev)
             elif dl == 0:
                 due_today.append(ev)
-            elif dl <= 7:
+            elif dl <= bell_days:
                 upcoming.append(ev)
     for arr in (overdue, due_today, upcoming):
         arr.sort(key=lambda e: e["date"])
     return {"overdue": overdue, "today": due_today, "upcoming": upcoming,
-            "count": len(overdue) + len(due_today)}
+            "bell_days": bell_days, "count": len(overdue) + len(due_today)}
 
-async def fetch_audit(vehicle_id, action, date_from, date_to, limit=5000):
-    q = build_audit_query(vehicle_id, action, date_from, date_to)
+async def fetch_audit(vehicle_id, action, date_from, date_to, user_email=None, limit=5000):
+    q = build_audit_query(vehicle_id, action, date_from, date_to, user_email)
     entries = await db.audit.find(q).sort("ts", -1).to_list(limit)
     for e in entries:
         e.pop("_id", None)
         e.pop("restore", None)
     return entries
 
+@api_router.get("/audit/operators")
+async def audit_operators(user: dict = Depends(get_current_user)):
+    emails = await db.audit.distinct("user_email")
+    out = []
+    for em in emails:
+        if not em:
+            continue
+        one = await db.audit.find_one({"user_email": em}, sort=[("ts", -1)])
+        out.append({"email": em, "name": (one or {}).get("user_name") or em})
+    return out
+
 @api_router.get("/reports/audit/excel")
 async def audit_report_excel(vehicle_id: Optional[str] = Query(None), action: Optional[str] = Query(None),
+                             user_email: Optional[str] = Query(None),
                              date_from: Optional[str] = Query(None), date_to: Optional[str] = Query(None),
                              user: dict = Depends(require("export_reports"))):
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
     settings = await get_settings()
-    entries = await fetch_audit(vehicle_id, action, date_from, date_to)
+    entries = await fetch_audit(vehicle_id, action, date_from, date_to, user_email)
     wb = Workbook(); ws = wb.active; ws.title = "Storico"
     ws["A1"] = settings.get("company_name", "FleetCare Autonoleggio"); ws["A1"].font = Font(bold=True, size=14)
     ws["A2"] = "Resoconto storico operazioni"
@@ -966,6 +986,7 @@ async def audit_report_excel(vehicle_id: Optional[str] = Query(None), action: Op
 
 @api_router.get("/reports/audit/pdf")
 async def audit_report_pdf(vehicle_id: Optional[str] = Query(None), action: Optional[str] = Query(None),
+                           user_email: Optional[str] = Query(None),
                            date_from: Optional[str] = Query(None), date_to: Optional[str] = Query(None),
                            user: dict = Depends(require("export_reports"))):
     from reportlab.lib import colors
@@ -974,7 +995,7 @@ async def audit_report_pdf(vehicle_id: Optional[str] = Query(None), action: Opti
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
     from reportlab.lib.styles import getSampleStyleSheet
     settings = await get_settings()
-    entries = await fetch_audit(vehicle_id, action, date_from, date_to)
+    entries = await fetch_audit(vehicle_id, action, date_from, date_to, user_email)
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=landscape(A4), topMargin=1*cm, bottomMargin=1*cm, leftMargin=1*cm, rightMargin=1*cm)
     styles = getSampleStyleSheet()
@@ -1002,6 +1023,94 @@ async def audit_report_pdf(vehicle_id: Optional[str] = Query(None), action: Opti
     doc.build(elements)
     buf.seek(0)
     fname = f"storico_{datetime.now().strftime('%Y%m%d')}.pdf"
+    return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={fname}"})
+
+@api_router.get("/reports/vehicle/{vehicle_id}/pdf")
+async def vehicle_report_pdf(vehicle_id: str, user: dict = Depends(require("export_reports"))):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+    from reportlab.lib.styles import getSampleStyleSheet
+    v = await get_vehicle_or_404(vehicle_id)
+    view = build_vehicle_view(v)
+    settings = await get_settings()
+    entries = await db.audit.find({"vehicle_id": vehicle_id}).sort("ts", -1).to_list(1000)
+    for e in entries:
+        e.pop("_id", None)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=1.2*cm, bottomMargin=1.2*cm, leftMargin=1.5*cm, rightMargin=1.5*cm)
+    styles = getSampleStyleSheet()
+    small = styles["Normal"]; small.fontSize = 8
+    elements = []
+    if settings.get("logo_path"):
+        try:
+            content, _ = get_object(settings["logo_path"])
+            if is_valid_image_bytes(content):
+                elements.append(Image(io.BytesIO(content), width=1.5*cm, height=1.5*cm))
+        except Exception:
+            pass
+    elements += [Paragraph(settings.get("company_name", "FleetCare Autonoleggio"), styles["Title"]),
+                 Paragraph(f"Scheda veicolo — {view['targa']}", styles["Heading2"]),
+                 Paragraph(f"Generata il {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles["Normal"]),
+                 Spacer(1, 0.3*cm)]
+
+    def dt(s):
+        return s[:10] if s else "—"
+
+    can = "PUO CIRCOLARE" if view["can_circulate"] else "NON PUO CIRCOLARE"
+    gen = [["Targa", view["targa"], "Marca/Modello", view.get("marca_modello", "")],
+           ["Immatricolazione", dt(view.get("data_immatricolazione")), "Circolazione", can],
+           ["Scad. bollo", dt(view.get("bollo_scadenza")), "Scad. collaudo", dt(view.get("collaudo_deadline"))]]
+    p = view.get("policy")
+    if p:
+        gen += [["Compagnia", p.get("compagnia") or "—", "N. polizza", p.get("numero_polizza") or "—"],
+                ["Tipo polizza", p.get("tipologia") or "—", "Scad. contratto", dt(p.get("scadenza_contratto"))],
+                ["Premio", (f"€ {p['importo_premio']:.2f}" if p.get("importo_premio") else "—"),
+                 "Sospensioni", f"{p.get('cumulative_suspension_days', 0)}/{MAX_SUSPENSION_DAYS} gg"],
+                ["Comporto 15gg", ("Si" if p.get("grace_applies") else "No"), "Stato polizza", p.get("status") or "—"]]
+    t = Table(gen, colWidths=[3.5*cm, 5.5*cm, 3.5*cm, 5*cm])
+    t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CBD5E1")),
+                           ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F1F5F9")),
+                           ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#F1F5F9")),
+                           ("FONTSIZE", (0, 0), (-1, -1), 8), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    elements += [Paragraph("Dati generali", styles["Heading3"]), t, Spacer(1, 0.3*cm)]
+
+    def hist_table(title, header, rows):
+        if not rows:
+            return [Paragraph(title, styles["Heading3"]), Paragraph("Nessun dato.", small), Spacer(1, 0.2*cm)]
+        data = [header] + rows
+        tb = Table(data, repeatRows=1)
+        tb.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
+                                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTSIZE", (0, 0), (-1, -1), 7),
+                                ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#CBD5E1")),
+                                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")])]))
+        return [Paragraph(title, styles["Heading3"]), tb, Spacer(1, 0.3*cm)]
+
+    bollo_rows = [[dt(b.get("data_pagamento")), f"€ {b.get('importo', 0):.2f}", b.get("periodo") or "—", b.get("note") or "—"]
+                  for b in view.get("bollo_history", [])]
+    elements += hist_table("Storico bolli", ["Data", "Importo", "Periodo", "Note"], bollo_rows)
+
+    coll_rows = [[dt(c.get("data_collaudo")), c.get("note") or "—"] for c in view.get("collaudo_history", [])]
+    elements += hist_table("Storico collaudi", ["Data", "Note"], coll_rows)
+
+    op_rows = [[dt(e.get("effective_date")), e.get("action_label", ""),
+                Paragraph(escape(e.get("description", "")), small), e.get("user_name") or e.get("user_email", ""),
+                "ANNULLATA" if e.get("reverted") else ""] for e in entries]
+    if op_rows:
+        data = [["Data", "Operazione", "Descrizione", "Operatore", "Stato"]] + op_rows
+        tb = Table(data, repeatRows=1, colWidths=[2.2*cm, 3*cm, 7.3*cm, 3.5*cm, 2*cm])
+        tb.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
+                                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTSIZE", (0, 0), (-1, -1), 7),
+                                ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#CBD5E1")), ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")])]))
+        elements += [Paragraph("Scheda storica operazioni", styles["Heading3"]), tb]
+    else:
+        elements += [Paragraph("Scheda storica operazioni", styles["Heading3"]), Paragraph("Nessuna operazione.", small)]
+
+    doc.build(elements)
+    buf.seek(0)
+    fname = f"scheda_{view['targa']}_{datetime.now().strftime('%Y%m%d')}.pdf"
     return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={fname}"})
 
 @api_router.get("/dashboard/stats")
@@ -1176,6 +1285,7 @@ async def update_settings(input: SettingsInput, user: dict = Depends(require("ma
         "company_name": input.company_name or "FleetCare Autonoleggio",
         "notification_recipients": recipients,
         "notification_days": {"bollo": max(1, nd.bollo), "collaudo": max(1, nd.collaudo), "polizza": max(1, nd.polizza)},
+        "bell_days": max(0, int(input.bell_days)),
     }}, upsert=True)
     return await get_settings()
 

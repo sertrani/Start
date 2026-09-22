@@ -17,6 +17,7 @@ export default function Settings() {
   const canSettings = hasPerm("manage_settings");
   const [company, setCompany] = useState("");
   const [days, setDays] = useState({ bollo: 30, collaudo: 30, polizza: 30 });
+  const [bellDays, setBellDays] = useState(7);
   const [recipients, setRecipients] = useState([""]);
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
@@ -27,6 +28,7 @@ export default function Settings() {
     if (settings) {
       setCompany(settings.company_name || "");
       setDays(settings.notification_days || { bollo: 30, collaudo: 30, polizza: 30 });
+      setBellDays(settings.bell_days ?? 7);
       setRecipients(settings.notification_recipients?.length ? settings.notification_recipients : [""]);
     }
   }, [settings]);
@@ -47,6 +49,7 @@ export default function Settings() {
       await api.put("/settings", {
         company_name: company,
         notification_days: { bollo: Number(days.bollo), collaudo: Number(days.collaudo), polizza: Number(days.polizza) },
+        bell_days: Number(bellDays),
         notification_recipients: recipients.filter((r) => r.trim()),
       });
       toast.success("Impostazioni salvate");
@@ -154,6 +157,11 @@ export default function Settings() {
             <b className="text-slate-800">{preview.count}</b> scadenze rientrano negli avvisi correnti.
           </p>
         )}
+        <div className="space-y-1.5 max-w-xs">
+          <Label className="text-xs">Giorni da mostrare nel campanello 🔔</Label>
+          <Input type="number" min="0" value={bellDays} onChange={(e) => setBellDays(e.target.value)} disabled={!canSettings} data-testid="bell-days-input" />
+          <p className="text-xs text-slate-400">Le scadenze entro questi giorni (più quelle scadute) appaiono nel campanello in alto.</p>
+        </div>
         {canSettings && (
           <Button variant="outline" onClick={sendNow} disabled={sending} data-testid="send-now-button">
             {sending ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Send className="h-4 w-4 mr-1.5" />} Invia riepilogo ora
