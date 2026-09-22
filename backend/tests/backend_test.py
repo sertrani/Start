@@ -62,7 +62,7 @@ class TestVehicles:
 
     def test_register_collaudo_updates_deadline(self, auth):
         vid = TestVehicles.created_ids[0]
-        r = auth.put(f"{API}/vehicles/{vid}/collaudo", json={"data_collaudo": "2025-09-20"})
+        r = auth.post(f"{API}/vehicles/{vid}/collaudo", json={"data_collaudo": "2025-09-20"})
         assert r.status_code == 200
         assert r.json()["collaudo_deadline"] == "2027-09-30"
 

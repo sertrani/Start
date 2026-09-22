@@ -1105,7 +1105,16 @@ def digest_html(company: str, items: List[dict]) -> str:
             f'<p style="font-size:12px;color:#888;margin-top:16px">Inviato da {escape(EMAIL_FROM_NAME)}. '
             f'Non chiediamo mai password o dati di pagamento via email.</p></td></tr></table>')
 
+_last_digest_at = 0.0
+
 async def run_digest():
+    global _last_digest_at
+    import time as _time
+    now = _time.monotonic()
+    if now - _last_digest_at < 15:
+        items, _ = await compute_digest()
+        return {"sent": 0, "reason": "riepilogo inviato da poco, riprova tra qualche secondo", "items": len(items)}
+    _last_digest_at = now
     items, settings = await compute_digest()
     recipients = settings.get("notification_recipients", [])
     if not recipients:

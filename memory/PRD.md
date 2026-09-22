@@ -38,7 +38,18 @@ Titolare/operatore autonoleggio (single admin: sertrani@gmail.com).
 - Hardening report PDF/Excel contro logo corrotti (validazione PIL).
 - Testato: backend 18/18 pytest + flussi frontend e2e OK.
 
+## Implementato (2026-09-22, iterazione 3)
+- Multi-utente con RBAC (organizzazione unica): admin crea utenti e assegna permessi (manage_vehicles, manage_policies, manage_payments, delete_operations, manage_users, export_reports, manage_settings); attiva/disattiva, reset password, elimina. Bottoni UI e API protetti dai permessi.
+- Resoconto storico (audit log) di ogni operazione + scheda storica per veicolo (timeline con data effettiva e operatore).
+- Annullamento operazioni con ripristino completo dello stato/contatori (snapshot-restore).
+- Data di registrazione personalizzabile per ogni operazione (bollo, collaudo, polizza, sospensione, riattivazione).
+- Numero polizza + rinnovo (nuova polizza) con archiviazione della precedente e azzeramento opzionale del contatore sospensioni (richiesto via checkbox); rinnovo annullabile.
+- Archivio collaudi (storico) come per i bolli, con ricalcolo automatico scadenza.
+- Promemoria email separati per bollo/collaudo/polizza.
+- Grafici riepilogativi nel Monitor (torta circolabilità + barre scadenze per mese).
+- Throttle anti-429 sull'invio digest.
+- Testato: backend 52/52 pytest + flussi frontend e2e OK.
+
 ## Backlog
-- P1: grafici riepilogativi (torta/barre) nel monitor, ordinamento avanzato.
-- P2: multi-utente/ruoli, notifiche in-app, archiviazione storica scadenze.
-- Nota tecnica: CORS attualmente '*'; migrare a lifespan handlers (deprecato on_event).
+- P1: retention/TTL per snapshot audit; grafici aggiuntivi.
+- P2: notifiche in-app; export storico; migrazione a lifespan handlers; split di server.py in moduli; restringere CORS a dominio esplicito.
