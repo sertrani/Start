@@ -4,6 +4,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -55,6 +56,9 @@ export default function VehicleFormDialog({ open, onOpenChange, vehicle, onSaved
           <DialogTitle className="font-heading">
             {editing ? "Modifica veicolo" : "Nuovo veicolo"}
           </DialogTitle>
+          <DialogDescription>
+            Inserisci i dati identificativi del veicolo e le scadenze note.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-4">
           <div className="space-y-1.5">

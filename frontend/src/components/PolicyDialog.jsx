@@ -4,6 +4,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,6 +80,9 @@ export default function PolicyDialog({ open, onOpenChange, vehicle, onSaved }) {
           <DialogTitle className="font-heading">
             Polizza — <span className="font-targa">{vehicle?.targa}</span>
           </DialogTitle>
+          <DialogDescription>
+            Gestisci i dati della polizza, le sospensioni della copertura e il conteggio dei giorni.
+          </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={savePolicy} className="space-y-4">

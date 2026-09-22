@@ -4,6 +4,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,9 @@ export default function CollaudoDialog({ open, onOpenChange, vehicle, onSaved })
       <DialogContent className="sm:max-w-sm" data-testid="collaudo-dialog">
         <DialogHeader>
           <DialogTitle className="font-heading">Registra collaudo eseguito</DialogTitle>
+          <DialogDescription>
+            La prossima scadenza sarà ricalcolata automaticamente.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-4">
           <p className="text-sm text-slate-500">
