@@ -1,12 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api, { apiErrorMessage } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { fmtDate } from "@/lib/format";
+import { Label } from "@/components/ui/label";
 import {
-  Receipt, Wrench, ShieldCheck, PauseCircle, PlayCircle, Pencil, Plus, Trash2, Undo2, RefreshCw, Search,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import { fmtDate, ACTION_LABELS } from "@/lib/format";
+import {
+  Receipt, Wrench, ShieldCheck, PauseCircle, PlayCircle, Pencil, Plus, Trash2, Undo2, RefreshCw,
+  FileSpreadsheet, FileText, Filter,
 } from "lucide-react";
 
 const ICON = {
@@ -14,16 +19,28 @@ const ICON = {
   policy_set: ShieldCheck, policy_renew: RefreshCw, policy_suspend: PauseCircle, policy_reactivate: PlayCircle,
   vehicle_create: Plus, vehicle_update: Pencil, vehicle_delete: Trash2, undo: Undo2,
 };
+const ALL = "__all__";
 
 export default function Storico() {
   const { hasPerm } = useAuth();
   const [entries, setEntries] = useState([]);
-  const [query, setQuery] = useState("");
+  const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState({ vehicle_id: ALL, action: ALL, date_from: "", date_to: "" });
+
+  const params = useMemo(() => {
+    const p = { limit: 500 };
+    if (filters.vehicle_id !== ALL) p.vehicle_id = filters.vehicle_id;
+    if (filters.action !== ALL) p.action = filters.action;
+    if (filters.date_from) p.date_from = filters.date_from;
+    if (filters.date_to) p.date_to = filters.date_to;
+    return p;
+  }, [filters]);
 
   const load = async () => {
+    setLoading(true);
     try {
-      const res = await api.get("/audit", { params: { limit: 500 } });
+      const res = await api.get("/audit", { params });
       setEntries(res.data);
     } catch (e) {
       toast.error(apiErrorMessage(e));
@@ -31,7 +48,9 @@ export default function Storico() {
       setLoading(false);
     }
   };
-  useEffect(() => { load(); }, []);
+
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [params]);
+  useEffect(() => { api.get("/vehicles").then((r) => setVehicles(r.data)).catch(() => {}); }, []);
 
   const undo = async (id) => {
     try {
@@ -43,13 +62,22 @@ export default function Storico() {
     }
   };
 
-  const filtered = entries.filter((e) => {
-    if (!query.trim()) return true;
-    const q = query.toLowerCase();
-    return (e.targa || "").toLowerCase().includes(q) ||
-      (e.action_label || "").toLowerCase().includes(q) ||
-      (e.user_email || "").toLowerCase().includes(q);
-  });
+  const download = async (kind) => {
+    try {
+      const res = await api.get(`/reports/audit/${kind}`, { params, responseType: "blob" });
+      const url = window.URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = kind === "excel" ? "storico.xlsx" : "storico.pdf";
+      a.click();
+      window.URL.revokeObjectURL(url);
+      toast.success("Report generato");
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
+    }
+  };
+
+  const reset = () => setFilters({ vehicle_id: ALL, action: ALL, date_from: "", date_to: "" });
 
   return (
     <div className="space-y-5">
@@ -58,19 +86,63 @@ export default function Storico() {
           <h1 className="font-heading text-2xl font-extrabold text-slate-900">Resoconto storico</h1>
           <p className="text-sm text-slate-500">Tutte le operazioni della flotta. Annullare ripristina lo stato e i contatori.</p>
         </div>
-        <div className="relative sm:w-72">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cerca targa, operazione, utente…" className="pl-9" data-testid="storico-search" />
+        {hasPerm("export_reports") && (
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => download("excel")} data-testid="storico-export-excel">
+              <FileSpreadsheet className="h-4 w-4 mr-1.5" /> Excel
+            </Button>
+            <Button variant="outline" onClick={() => download("pdf")} data-testid="storico-export-pdf">
+              <FileText className="h-4 w-4 mr-1.5" /> PDF
+            </Button>
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 grid grid-cols-1 sm:grid-cols-4 gap-3 items-end" data-testid="storico-filters">
+        <div className="space-y-1.5">
+          <Label className="text-xs flex items-center gap-1"><Filter className="h-3 w-3" /> Veicolo</Label>
+          <Select value={filters.vehicle_id} onValueChange={(v) => setFilters({ ...filters, vehicle_id: v })}>
+            <SelectTrigger data-testid="filter-vehicle"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>Tutti i veicoli</SelectItem>
+              {vehicles.map((v) => (
+                <SelectItem key={v.id} value={v.id}>{v.targa} — {v.marca_modello}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Tipo operazione</Label>
+          <Select value={filters.action} onValueChange={(v) => setFilters({ ...filters, action: v })}>
+            <SelectTrigger data-testid="filter-action"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>Tutte le operazioni</SelectItem>
+              {Object.entries(ACTION_LABELS).map(([k, v]) => (
+                <SelectItem key={k} value={k}>{v}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Dal</Label>
+          <Input type="date" value={filters.date_from} onChange={(e) => setFilters({ ...filters, date_from: e.target.value })} data-testid="filter-date-from" />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Al</Label>
+          <div className="flex gap-2">
+            <Input type="date" value={filters.date_to} onChange={(e) => setFilters({ ...filters, date_to: e.target.value })} data-testid="filter-date-to" />
+            <Button variant="ghost" onClick={reset} data-testid="filter-reset">Azzera</Button>
+          </div>
         </div>
       </div>
 
       {loading ? (
         <p className="text-center text-slate-400 py-16">Caricamento…</p>
-      ) : filtered.length === 0 ? (
-        <p className="text-center text-slate-400 py-16 border-2 border-dashed border-slate-200 rounded-2xl bg-white">Nessuna operazione.</p>
+      ) : entries.length === 0 ? (
+        <p className="text-center text-slate-400 py-16 border-2 border-dashed border-slate-200 rounded-2xl bg-white">Nessuna operazione per i filtri selezionati.</p>
       ) : (
         <div className="rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100" data-testid="storico-list">
-          {filtered.map((e) => {
+          {entries.map((e) => {
             const Icon = ICON[e.action] || Pencil;
             const undoable = !e.reverted && e.action !== "undo";
             return (

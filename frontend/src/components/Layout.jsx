@@ -2,6 +2,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { useSettings } from "@/context/SettingsContext";
 import AuthImage from "@/components/AuthImage";
+import NotificationBell from "@/components/NotificationBell";
 import { Button } from "@/components/ui/button";
 import { Car, LogOut, LayoutGrid, CalendarDays, Grid3x3, Settings as SettingsIcon, ScrollText } from "lucide-react";
 
@@ -35,8 +36,9 @@ export default function Layout() {
               <p className="text-[11px] text-slate-500">Gestione Scadenze Flotta</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="hidden md:block text-sm text-slate-500 mr-1">{user?.name || user?.email}</span>
+          <div className="flex items-center gap-1">
+            <NotificationBell />
+            <span className="hidden md:block text-sm text-slate-500 mx-1">{user?.name || user?.email}</span>
             <Button variant="ghost" size="sm" onClick={() => logout().then(() => navigate("/login"))} data-testid="logout-button">
               <LogOut className="h-4 w-4 sm:mr-1.5" /><span className="hidden sm:inline">Esci</span>
             </Button>

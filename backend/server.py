@@ -492,7 +492,7 @@ def snapshot(v: dict, fields: list) -> dict:
 
 # ---------------- Auth endpoints ----------------
 @api_router.post("/auth/login")
-async def login(input: LoginInput, response: Response):
+async def login(input: LoginInput, response: Response, request: Request):
     email = input.email.lower()
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(input.password, user["password_hash"]):
@@ -502,6 +502,11 @@ async def login(input: LoginInput, response: Response):
     uid = str(user["_id"])
     token = create_access_token(uid, email)
     response.set_cookie("access_token", token, httponly=True, secure=True, samesite="none", max_age=604800, path="/")
+    xff = request.headers.get("x-forwarded-for")
+    ip = xff.split(",")[0].strip() if xff else (request.client.host if request.client else None)
+    await db.login_log.insert_one({"id": str(uuid.uuid4()), "user_id": uid, "email": email,
+                                   "name": user.get("name"), "role": user.get("role", "user"),
+                                   "ts": now_iso(), "ip": ip})
     return {"token": token, "user": public_user(user)}
 
 @api_router.post("/auth/logout")
@@ -823,14 +828,30 @@ async def download_file(path: str, authorization: str = Header(None), auth: str 
 
 # ---------------- Audit / history ----------------
 @api_router.get("/audit")
-async def list_audit(vehicle_id: Optional[str] = Query(None), limit: int = Query(300),
-                     user: dict = Depends(get_current_user)):
-    q = {"vehicle_id": vehicle_id} if vehicle_id else {}
-    entries = await db.audit.find(q).sort("ts", -1).to_list(min(limit, 1000))
+async def list_audit(vehicle_id: Optional[str] = Query(None), action: Optional[str] = Query(None),
+                     date_from: Optional[str] = Query(None), date_to: Optional[str] = Query(None),
+                     limit: int = Query(300), user: dict = Depends(get_current_user)):
+    q = build_audit_query(vehicle_id, action, date_from, date_to)
+    entries = await db.audit.find(q).sort("ts", -1).to_list(min(limit, 2000))
     for e in entries:
         e.pop("_id", None)
         e.pop("restore", None)
     return entries
+
+def build_audit_query(vehicle_id, action, date_from, date_to):
+    q = {}
+    if vehicle_id:
+        q["vehicle_id"] = vehicle_id
+    if action:
+        q["action"] = action
+    if date_from or date_to:
+        rng = {}
+        if date_from:
+            rng["$gte"] = date_from[:10]
+        if date_to:
+            rng["$lte"] = date_to[:10] + "T23:59:59.999999+00:00"
+        q["ts"] = rng
+    return q
 
 @api_router.get("/vehicles/{vehicle_id}/history")
 async def vehicle_history(vehicle_id: str, user: dict = Depends(get_current_user)):
@@ -871,6 +892,118 @@ async def undo_operation(audit_id: str, user: dict = Depends(require("delete_ope
     return {"ok": True}
 
 # ---------------- Dashboard & calendar ----------------
+@api_router.get("/login-log")
+async def login_log(limit: int = Query(200), user: dict = Depends(require("manage_users"))):
+    logs = await db.login_log.find().sort("ts", -1).to_list(min(limit, 1000))
+    for l in logs:
+        l.pop("_id", None)
+    return logs
+
+@api_router.get("/notifications/today")
+async def notifications_today(user: dict = Depends(get_current_user)):
+    vehicles = await db.vehicles.find().to_list(2000)
+    today = datetime.now(timezone.utc).date()
+    overdue, due_today, upcoming = [], [], []
+    for v in vehicles:
+        if v.get("policy"):
+            normalize_policy_suspension(v["policy"])
+        for ev in vehicle_events(build_vehicle_view(v)):
+            d = parse_date(ev["date"])
+            if not d:
+                continue
+            dl = (d - today).days
+            ev["days_left"] = dl
+            if dl < 0:
+                overdue.append(ev)
+            elif dl == 0:
+                due_today.append(ev)
+            elif dl <= 7:
+                upcoming.append(ev)
+    for arr in (overdue, due_today, upcoming):
+        arr.sort(key=lambda e: e["date"])
+    return {"overdue": overdue, "today": due_today, "upcoming": upcoming,
+            "count": len(overdue) + len(due_today)}
+
+async def fetch_audit(vehicle_id, action, date_from, date_to, limit=5000):
+    q = build_audit_query(vehicle_id, action, date_from, date_to)
+    entries = await db.audit.find(q).sort("ts", -1).to_list(limit)
+    for e in entries:
+        e.pop("_id", None)
+        e.pop("restore", None)
+    return entries
+
+@api_router.get("/reports/audit/excel")
+async def audit_report_excel(vehicle_id: Optional[str] = Query(None), action: Optional[str] = Query(None),
+                             date_from: Optional[str] = Query(None), date_to: Optional[str] = Query(None),
+                             user: dict = Depends(require("export_reports"))):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    settings = await get_settings()
+    entries = await fetch_audit(vehicle_id, action, date_from, date_to)
+    wb = Workbook(); ws = wb.active; ws.title = "Storico"
+    ws["A1"] = settings.get("company_name", "FleetCare Autonoleggio"); ws["A1"].font = Font(bold=True, size=14)
+    ws["A2"] = "Resoconto storico operazioni"
+    headers = ["Data", "Ora", "Operazione", "Targa", "Veicolo", "Descrizione", "Operatore", "Stato"]
+    for ci, h in enumerate(headers, 1):
+        c = ws.cell(row=4, column=ci, value=h)
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
+    for ri, e in enumerate(entries, 5):
+        ts = e.get("ts", "")
+        vals = [e.get("effective_date", "")[:10], ts[11:16] if len(ts) > 16 else "",
+                e.get("action_label", ""), e.get("targa") or "-", e.get("marca_modello") or "-",
+                e.get("description", ""), e.get("user_name") or e.get("user_email", ""),
+                "ANNULLATA" if e.get("reverted") else ""]
+        for ci, val in enumerate(vals, 1):
+            ws.cell(row=ri, column=ci, value=val)
+    widths = [12, 8, 24, 12, 20, 50, 22, 12]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    fname = f"storico_{datetime.now().strftime('%Y%m%d')}.xlsx"
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": f"attachment; filename={fname}"})
+
+@api_router.get("/reports/audit/pdf")
+async def audit_report_pdf(vehicle_id: Optional[str] = Query(None), action: Optional[str] = Query(None),
+                           date_from: Optional[str] = Query(None), date_to: Optional[str] = Query(None),
+                           user: dict = Depends(require("export_reports"))):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
+    settings = await get_settings()
+    entries = await fetch_audit(vehicle_id, action, date_from, date_to)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), topMargin=1*cm, bottomMargin=1*cm, leftMargin=1*cm, rightMargin=1*cm)
+    styles = getSampleStyleSheet()
+    period = ""
+    if date_from or date_to:
+        period = f" · periodo {date_from or '…'} -> {date_to or '…'}"
+    elements = [Paragraph(settings.get("company_name", "FleetCare Autonoleggio"), styles["Title"]),
+                Paragraph("Resoconto storico operazioni" + period, styles["Heading2"]),
+                Paragraph(f"Generato il {datetime.now().strftime('%d/%m/%Y %H:%M')} · {len(entries)} operazioni", styles["Normal"]),
+                Spacer(1, 0.4*cm)]
+    desc_style = styles["Normal"]; desc_style.fontSize = 7
+    cols = ["Data", "Operazione", "Targa", "Descrizione", "Operatore", "Stato"]
+    data = [cols]
+    for e in entries:
+        data.append([e.get("effective_date", "")[:10], e.get("action_label", ""), e.get("targa") or "-",
+                     Paragraph(escape(e.get("description", "")), desc_style),
+                     e.get("user_name") or e.get("user_email", ""),
+                     "ANNULLATA" if e.get("reverted") else ""])
+    table = Table(data, repeatRows=1, colWidths=[2.2*cm, 3.5*cm, 2*cm, 11*cm, 4*cm, 2.3*cm])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTSIZE", (0, 0), (-1, -1), 7), ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CBD5E1")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"), ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")])]))
+    elements.append(table)
+    doc.build(elements)
+    buf.seek(0)
+    fname = f"storico_{datetime.now().strftime('%Y%m%d')}.pdf"
+    return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={fname}"})
+
 @api_router.get("/dashboard/stats")
 async def dashboard_stats(user: dict = Depends(get_current_user)):
     vehicles = await db.vehicles.find().to_list(2000)
@@ -1165,6 +1298,7 @@ async def startup():
     await db.vehicles.create_index("id", unique=True)
     await db.audit.create_index("ts")
     await db.audit.create_index("vehicle_id")
+    await db.login_log.create_index("ts")
     try:
         init_storage()
     except Exception as e:

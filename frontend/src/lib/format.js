@@ -26,6 +26,21 @@ export const DOC_LABELS = {
   altro: "Altro",
 };
 
+export const ACTION_LABELS = {
+  vehicle_create: "Creazione veicolo",
+  vehicle_update: "Modifica veicolo",
+  vehicle_delete: "Eliminazione veicolo",
+  bollo_add: "Pagamento bollo",
+  bollo_delete: "Eliminazione bollo",
+  collaudo_add: "Collaudo eseguito",
+  collaudo_delete: "Eliminazione collaudo",
+  policy_set: "Polizza salvata",
+  policy_renew: "Rinnovo / nuova polizza",
+  policy_suspend: "Sospensione copertura",
+  policy_reactivate: "Riattivazione copertura",
+  undo: "Annullamento operazione",
+};
+
 export function stateBadge(state) {
   switch (state) {
     case "valid":

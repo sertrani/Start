@@ -5,6 +5,7 @@ import { useSettings } from "@/context/SettingsContext";
 import { useAuth } from "@/context/AuthContext";
 import AuthImage from "@/components/AuthImage";
 import UsersManager from "@/components/UsersManager";
+import LoginLog from "@/components/LoginLog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -170,6 +171,7 @@ export default function Settings() {
       )}
 
       {hasPerm("manage_users") && <UsersManager />}
+      {hasPerm("manage_users") && <LoginLog />}
     </div>
   );
 }
