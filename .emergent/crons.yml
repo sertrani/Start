@@ -7,3 +7,10 @@ crons:
     method: POST
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     enabled: true
+  - name: strategia-avviso
+    description: "Controlla ogni mattina se è il giorno di invio dell'avviso strategia sospensioni (1° del mese configurato)"
+    cron: "30 7 * * *"
+    timezone: "Europe/Rome"
+    endpoint: "{{BASE_URL}}/api/cron/strategy-alert"
+    method: POST
+    enabled: true

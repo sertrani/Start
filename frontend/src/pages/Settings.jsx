@@ -6,6 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 import AuthImage from "@/components/AuthImage";
 import UsersManager from "@/components/UsersManager";
 import LoginLog from "@/components/LoginLog";
+import MaintenanceTypesManager from "@/components/MaintenanceTypesManager";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Plus, Trash2, Mail, Building2, ImageUp, Send, Bell, CalendarRange } from "lucide-react";
+import { Loader2, Plus, Trash2, Mail, Building2, ImageUp, Send, Bell, CalendarRange, Lightbulb } from "lucide-react";
 
 const MONTHS = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno", "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"];
 
@@ -29,6 +30,9 @@ export default function Settings() {
   const [bellDays, setBellDays] = useState(7);
   const [seasonStart, setSeasonStart] = useState(4);
   const [seasonEnd, setSeasonEnd] = useState(10);
+  const [alertMonth, setAlertMonth] = useState(11);
+  const [targets, setTargets] = useState({ auto: 0, furgone: 0, altro: 0 });
+  const [sendingAlert, setSendingAlert] = useState(false);
   const [recipients, setRecipients] = useState([""]);
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
@@ -42,6 +46,12 @@ export default function Settings() {
       setBellDays(settings.bell_days ?? 7);
       setSeasonStart(settings.season_start_month ?? 4);
       setSeasonEnd(settings.season_end_month ?? 10);
+      setAlertMonth(settings.strategy_alert_month ?? 11);
+      setTargets({
+        auto: settings.strategy_target_auto ?? 0,
+        furgone: settings.strategy_target_furgone ?? 0,
+        altro: settings.strategy_target_altro ?? 0,
+      });
       setRecipients(settings.notification_recipients?.length ? settings.notification_recipients : [""]);
     }
   }, [settings]);
@@ -65,6 +75,10 @@ export default function Settings() {
         bell_days: Number(bellDays),
         season_start_month: Number(seasonStart),
         season_end_month: Number(seasonEnd),
+        strategy_alert_month: Number(alertMonth),
+        strategy_target_auto: Number(targets.auto),
+        strategy_target_furgone: Number(targets.furgone),
+        strategy_target_altro: Number(targets.altro),
         notification_recipients: recipients.filter((r) => r.trim()),
       });
       toast.success("Impostazioni salvate");
@@ -107,6 +121,19 @@ export default function Settings() {
   };
 
   const REM = [["bollo", "Bollo"], ["collaudo", "Collaudo"], ["polizza", "Polizza / Rata"]];
+
+  const sendAlert = async () => {
+    setSendingAlert(true);
+    try {
+      const res = await api.post("/strategy/alert/send-now");
+      if (res.data.sent > 0) toast.success(`Avviso strategia inviato a ${res.data.sent} destinatario/i (${res.data.items} mezzi)`);
+      else toast.warning(res.data.reason || "Nessun destinatario configurato");
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    } finally {
+      setSendingAlert(false);
+    }
+  };
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -213,6 +240,42 @@ export default function Settings() {
           </div>
         </div>
       </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+        <h2 className="flex items-center gap-2 font-heading font-semibold text-slate-800"><Lightbulb className="h-4 w-4 text-amber-500" /> Strategia sospensioni</h2>
+        <p className="text-sm text-slate-500">Fabbisogno di veicoli per tipo in bassa stagione (usato per consigliare l'eccedenza da sospendere) e mese di invio dell'avviso email.</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-slate-500">Auto necessarie</Label>
+            <Input type="number" min="0" value={targets.auto} onChange={(e) => setTargets({ ...targets, auto: e.target.value })} disabled={!canSettings} data-testid="strategy-target-auto" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-slate-500">Furgoni necessari</Label>
+            <Input type="number" min="0" value={targets.furgone} onChange={(e) => setTargets({ ...targets, furgone: e.target.value })} disabled={!canSettings} data-testid="strategy-target-furgone" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-slate-500">Altri necessari</Label>
+            <Input type="number" min="0" value={targets.altro} onChange={(e) => setTargets({ ...targets, altro: e.target.value })} disabled={!canSettings} data-testid="strategy-target-altro" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-slate-500">Mese avviso email</Label>
+            <Select value={String(alertMonth)} onValueChange={(v) => setAlertMonth(Number(v))} disabled={!canSettings}>
+              <SelectTrigger data-testid="strategy-alert-month-select"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {MONTHS.map((m, i) => (<SelectItem key={i} value={String(i + 1)}>{m}</SelectItem>))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        {canSettings && (
+          <Button variant="outline" onClick={sendAlert} disabled={sendingAlert} data-testid="strategy-alert-send-now">
+            {sendingAlert ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Send className="h-4 w-4 mr-1.5" />} Invia avviso strategia ora
+          </Button>
+        )}
+        <p className="text-xs text-slate-400">L'avviso viene inviato automaticamente il 1° del mese selezionato ai destinatari email configurati.</p>
+      </section>
+
+      {canSettings && <MaintenanceTypesManager />}
 
       {canSettings && (
         <div className="flex justify-end">

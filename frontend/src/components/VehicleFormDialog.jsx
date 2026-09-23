@@ -31,6 +31,7 @@ export default function VehicleFormDialog({ open, onOpenChange, vehicle, onSaved
     data_immatricolazione: duplicate ? "" : vehicle?.data_immatricolazione?.slice(0, 10) || "",
     bollo_scadenza: duplicate ? "" : vehicle?.bollo_scadenza?.slice(0, 10) || "",
     tipo: vehicle?.tipo || "auto",
+    costo_collaudo: vehicle?.costo_collaudo ?? "",
     note: vehicle?.note || "",
   });
   const [loading, setLoading] = useState(false);
@@ -46,6 +47,7 @@ export default function VehicleFormDialog({ open, onOpenChange, vehicle, onSaved
         data_immatricolazione: form.data_immatricolazione,
         bollo_scadenza: form.bollo_scadenza || null,
         tipo: form.tipo,
+        costo_collaudo: form.costo_collaudo === "" ? null : Number(form.costo_collaudo),
         note: form.note || null,
       };
       if (editing) await api.put(`/vehicles/${vehicle.id}`, payload);
@@ -104,6 +106,11 @@ export default function VehicleFormDialog({ open, onOpenChange, vehicle, onSaved
               <Label>Scadenza bollo</Label>
               <Input type="date" value={form.bollo_scadenza} onChange={set("bollo_scadenza")} data-testid="vehicle-bollo-input" />
             </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Costo collaudo (€)</Label>
+            <Input type="number" min="0" step="0.01" value={form.costo_collaudo} onChange={set("costo_collaudo")} placeholder="es. 120" data-testid="vehicle-costo-collaudo-input" />
+            <p className="text-xs text-slate-400">Usato per stimare con precisione il risparmio nella pagina Strategia.</p>
           </div>
           <div className="space-y-1.5">
             <Label>Note</Label>

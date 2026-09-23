@@ -4,7 +4,7 @@ import { useSettings } from "@/context/SettingsContext";
 import AuthImage from "@/components/AuthImage";
 import NotificationBell from "@/components/NotificationBell";
 import { Button } from "@/components/ui/button";
-import { Car, LogOut, LayoutGrid, CalendarDays, Grid3x3, Settings as SettingsIcon, ScrollText, Lightbulb } from "lucide-react";
+import { Car, LogOut, LayoutGrid, CalendarDays, Grid3x3, Settings as SettingsIcon, ScrollText, Lightbulb, Wrench } from "lucide-react";
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -17,6 +17,7 @@ export default function Layout() {
     { to: "/calendario", label: "Calendario", icon: CalendarDays, testid: "nav-calendario" },
     { to: "/monitor", label: "Monitor", icon: Grid3x3, testid: "nav-monitor" },
     { to: "/strategia", label: "Strategia", icon: Lightbulb, testid: "nav-strategia" },
+    { to: "/manutenzione", label: "Manutenzione", icon: Wrench, testid: "nav-manutenzione" },
     { to: "/storico", label: "Storico", icon: ScrollText, testid: "nav-storico" },
     { to: "/impostazioni", label: "Impostazioni", icon: SettingsIcon, testid: "nav-impostazioni" },
   ];

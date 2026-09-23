@@ -47,12 +47,13 @@ GRACE_AUTO_TYPES = {"annuale"}
 VEHICLE_TYPES = ["auto", "furgone", "altro"]
 DOC_TYPES = ["libretto", "carta_circolazione", "polizza", "altro"]
 
-PERMISSIONS = ["manage_vehicles", "manage_policies", "manage_payments",
+PERMISSIONS = ["manage_vehicles", "manage_policies", "manage_payments", "manage_maintenance",
                "delete_operations", "manage_users", "export_reports", "manage_settings"]
 PERMISSION_LABELS = {
     "manage_vehicles": "Gestione veicoli",
     "manage_policies": "Gestione polizze e sospensioni",
     "manage_payments": "Registrazione pagamenti (bollo/collaudo)",
+    "manage_maintenance": "Manutenzione e controlli periodici",
     "delete_operations": "Annullare / eliminare operazioni",
     "manage_users": "Gestione utenti",
     "export_reports": "Esportazione report",
@@ -283,6 +284,7 @@ class VehicleInput(BaseModel):
     bollo_scadenza: Optional[str] = None
     note: Optional[str] = Field(None, max_length=2000)
     tipo: Optional[str] = "auto"
+    costo_collaudo: Optional[float] = None
 
 class CollaudoInput(BaseModel):
     data_collaudo: str
@@ -310,6 +312,10 @@ class SettingsInput(BaseModel):
     bell_days: int = Field(7, ge=0, le=365)
     season_start_month: int = Field(4, ge=1, le=12)
     season_end_month: int = Field(10, ge=1, le=12)
+    strategy_alert_month: int = Field(11, ge=1, le=12)
+    strategy_target_auto: int = Field(0, ge=0, le=999)
+    strategy_target_furgone: int = Field(0, ge=0, le=999)
+    strategy_target_altro: int = Field(0, ge=0, le=999)
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -324,6 +330,33 @@ class UserUpdate(BaseModel):
 
 class PasswordResetInput(BaseModel):
     password: str
+
+class MaintTypeInput(BaseModel):
+    name: str = Field(..., max_length=120)
+    interval_days: int = Field(180, ge=1, le=3650)
+
+class MaintCheckInput(BaseModel):
+    vehicle_id: str
+    type_id: str
+    checked_at: str
+    note: Optional[str] = Field(None, max_length=500)
+
+class InterventionInput(BaseModel):
+    vehicle_id: str
+    descrizione: str = Field(..., max_length=1000)
+    note: Optional[str] = Field(None, max_length=1000)
+
+class InterventionCompleteInput(BaseModel):
+    done_at: str
+    costo: float = 0.0
+    note: Optional[str] = Field(None, max_length=1000)
+
+class PlanInput(BaseModel):
+    vehicle_id: str
+    suggested_from: Optional[str] = None
+    suggested_until: Optional[str] = None
+    estimated_saving: Optional[float] = None
+    note: Optional[str] = Field(None, max_length=500)
 
 # ---------------- Date / business logic ----------------
 def parse_date(s: Optional[str]) -> Optional[date]:
@@ -483,6 +516,10 @@ async def get_settings() -> dict:
         s["bell_days"] = 7
     s.setdefault("season_start_month", 4)
     s.setdefault("season_end_month", 10)
+    s.setdefault("strategy_alert_month", 11)
+    s.setdefault("strategy_target_auto", 0)
+    s.setdefault("strategy_target_furgone", 0)
+    s.setdefault("strategy_target_altro", 0)
     return s
 
 # ---------------- Audit ----------------
@@ -628,7 +665,7 @@ async def get_vehicle(vehicle_id: str, user: dict = Depends(get_current_user)):
 @api_router.put("/vehicles/{vehicle_id}")
 async def update_vehicle(vehicle_id: str, input: VehicleInput, user: dict = Depends(require("manage_vehicles"))):
     v = await get_vehicle_or_404(vehicle_id)
-    prev = snapshot(v, ["targa", "marca_modello", "data_immatricolazione", "bollo_scadenza", "note", "tipo"])
+    prev = snapshot(v, ["targa", "marca_modello", "data_immatricolazione", "bollo_scadenza", "note", "tipo", "costo_collaudo"])
     upd = input.model_dump()
     upd["targa"] = upd["targa"].upper().strip()
     await db.vehicles.update_one({"id": vehicle_id}, {"$set": upd})
@@ -941,6 +978,28 @@ async def notifications_today(user: dict = Depends(get_current_user)):
                 upcoming.append(ev)
     for arr in (overdue, due_today, upcoming):
         arr.sort(key=lambda e: e["date"])
+    types = await db.maint_types.find({"active": True}).sort("order", 1).to_list(200)
+    if types:
+        latest = await latest_checks_map()
+        vmap = {v["id"]: v for v in vehicles}
+        for (vid, tid), c in latest.items():
+            t = next((x for x in types if x["id"] == tid), None)
+            v = vmap.get(vid)
+            if not t or not v:
+                continue
+            nd = parse_date(c["checked_at"]) + timedelta(days=t["interval_days"])
+            dl = (nd - today).days
+            ev = {"date": nd.isoformat(), "type": "manutenzione", "label": f"Controllo: {t['name']}",
+                  "state": "expired" if dl < 0 else "upcoming", "targa": v["targa"], "vehicle_id": vid,
+                  "marca_modello": v.get("marca_modello"), "days_left": dl}
+            if dl < 0:
+                overdue.append(ev)
+            elif dl == 0:
+                due_today.append(ev)
+            elif dl <= bell_days:
+                upcoming.append(ev)
+        for arr in (overdue, due_today, upcoming):
+            arr.sort(key=lambda e: e["date"])
     return {"overdue": overdue, "today": due_today, "upcoming": upcoming,
             "bell_days": bell_days, "count": len(overdue) + len(due_today)}
 
@@ -1169,7 +1228,7 @@ def next_peak_prep(today: date) -> date:
     cand = date(today.year, 7, 1) - timedelta(days=15)
     return cand if today < cand else date(today.year + 1, 7, 1) - timedelta(days=15)
 
-def strategy_for_vehicle(view: dict, phase: str, today: date, start_m: int) -> dict:
+def strategy_for_vehicle(view: dict, phase: str, today: date, start_m: int, until: Optional[date] = None) -> dict:
     p = view.get("policy")
     tipo = view.get("tipo") or "auto"
     base = {"vehicle_id": view["id"], "targa": view["targa"], "marca_modello": view.get("marca_modello"),
@@ -1195,7 +1254,7 @@ def strategy_for_vehicle(view: dict, phase: str, today: date, start_m: int) -> d
 
     cost_events = []
     if view.get("collaudo_deadline"):
-        cost_events.append(("Collaudo/revisione", parse_date(view["collaudo_deadline"]), 120.0))
+        cost_events.append(("Collaudo/revisione", parse_date(view["collaudo_deadline"]), view.get("costo_collaudo") or 120.0))
     if contract:
         cost_events.append(("Rinnovo polizza", contract, p.get("importo_premio") or 300.0))
     rata = parse_date(p.get("scadenza_rata_intermedia"))
@@ -1246,6 +1305,10 @@ def strategy_for_vehicle(view: dict, phase: str, today: date, start_m: int) -> d
         sug_until = sug_from + timedelta(days=min(90, max(remaining, 0)))
     if (sug_until - sug_from).days > remaining:
         sug_until = sug_from + timedelta(days=max(remaining, 0))
+    if until:
+        sug_until = min(sug_until, until)
+        if sug_until < sug_from:
+            sug_until = sug_from
 
     estimated_saving = None
     if p.get("importo_premio") and sug_until > sug_from:
@@ -1272,24 +1335,63 @@ def strategy_for_vehicle(view: dict, phase: str, today: date, start_m: int) -> d
                        "can_suspend": p.get("can_suspend", False),
                        "importo_premio": p.get("importo_premio")}}
 
-@api_router.get("/strategy")
-async def strategy(user: dict = Depends(get_current_user)):
+TIPO_LABEL_IT = {"auto": "auto", "furgone": "furgoni", "altro": "altri mezzi"}
+
+async def compute_strategy(until_s: Optional[str] = None, needs: Optional[dict] = None):
     settings = await get_settings()
     start_m = int(settings.get("season_start_month", 4))
     end_m = int(settings.get("season_end_month", 10))
     today = datetime.now(timezone.utc).date()
     phase = season_phase(today, start_m, end_m)
+    until = parse_date(until_s) if until_s else None
+    planned_vids = {pl["vehicle_id"] for pl in await db.susp_plans.find({"status": "planned"}).to_list(2000)}
     vehicles = await db.vehicles.find().to_list(2000)
     items = []
     for v in vehicles:
         if v.get("policy"):
             normalize_policy_suspension(v["policy"])
-        items.append(strategy_for_vehicle(build_vehicle_view(v), phase, today, start_m))
-    items.sort(key=lambda x: x["score"], reverse=True)
-    opportunities = sum(1 for i in items if i["level"] == "high")
+        it = strategy_for_vehicle(build_vehicle_view(v), phase, today, start_m, until)
+        it["planned"] = it["vehicle_id"] in planned_vids
+        it["surplus"] = False
+        items.append(it)
+    if needs:
+        by_type = {}
+        for it in items:
+            if it["policy"] and it["policy"].get("status") != "suspended":
+                by_type.setdefault(it["tipo"], []).append(it)
+        for tipo, need in needs.items():
+            group_all = by_type.get(tipo, [])
+            active = len(group_all)
+            surplus = max(0, active - int(need))
+            eligible = sorted([i for i in group_all if i["policy"].get("can_suspend")], key=lambda x: -x["score"])
+            for idx, it in enumerate(eligible):
+                if idx < surplus:
+                    it["surplus"] = True
+                    if it["level"] in ("low", "medium"):
+                        it["level"] = "high"; it["recommendation"] = "Sospendi (eccedenza)"
+                    it["reasons"] = [f"Fabbisogno stagionale: servono {int(need)} {TIPO_LABEL_IT.get(tipo, tipo)}, attivi {active} → {surplus} da sospendere."] + it["reasons"]
+                elif not it["blockers"]:
+                    it["level"] = "low"; it["recommendation"] = "Mantieni (necessario)"
+    items.sort(key=lambda x: (0 if x.get("surplus") else 1, -x["score"]))
+    to_suspend = [i for i in items if i["policy"] and i["policy"].get("can_suspend")
+                  and (i.get("surplus") or i["level"] == "high") and not i.get("planned")]
+    total_saving = round(sum((i.get("estimated_saving") or 0) for i in to_suspend), 2)
     return {"today": today.isoformat(),
             "season": {"start": start_m, "end": end_m, "phase": phase, "phase_label": PHASE_LABEL.get(phase)},
-            "items": items, "opportunities": opportunities}
+            "items": items, "opportunities": len(to_suspend),
+            "simulation": {"until": (until.isoformat() if until else next_peak_prep(today).isoformat()),
+                           "total_saving": total_saving, "count": len(to_suspend)},
+            "targets": needs or {}}
+
+@api_router.get("/strategy")
+async def strategy(until: Optional[str] = Query(None), need_auto: Optional[int] = Query(None),
+                   need_furgone: Optional[int] = Query(None), need_altro: Optional[int] = Query(None),
+                   user: dict = Depends(get_current_user)):
+    needs = {}
+    if need_auto is not None: needs["auto"] = need_auto
+    if need_furgone is not None: needs["furgone"] = need_furgone
+    if need_altro is not None: needs["altro"] = need_altro
+    return await compute_strategy(until, needs or None)
 
 def vehicle_events(view: dict) -> List[dict]:
     ev = []
@@ -1443,6 +1545,10 @@ async def update_settings(input: SettingsInput, user: dict = Depends(require("ma
         "bell_days": max(0, int(input.bell_days)),
         "season_start_month": int(input.season_start_month),
         "season_end_month": int(input.season_end_month),
+        "strategy_alert_month": int(input.strategy_alert_month),
+        "strategy_target_auto": int(input.strategy_target_auto),
+        "strategy_target_furgone": int(input.strategy_target_furgone),
+        "strategy_target_altro": int(input.strategy_target_altro),
     }}, upsert=True)
     return await get_settings()
 
@@ -1554,6 +1660,454 @@ async def cron_digest(background_tasks: BackgroundTasks, authorization: str = He
 async def root():
     return {"message": "FleetCare API"}
 
+# ================= Piano sospensioni =================
+@api_router.get("/strategy/plan")
+async def list_plan(user: dict = Depends(get_current_user)):
+    plans = await db.susp_plans.find().sort("created_at", -1).to_list(2000)
+    vids = {v["id"]: v for v in await db.vehicles.find().to_list(2000)}
+    out = []
+    for pl in plans:
+        pl.pop("_id", None)
+        v = vids.get(pl["vehicle_id"]) or {}
+        pl["targa"] = v.get("targa") or pl.get("targa")
+        pl["marca_modello"] = v.get("marca_modello") or pl.get("marca_modello")
+        out.append(pl)
+    return out
+
+@api_router.post("/strategy/plan")
+async def create_plan(input: PlanInput, user: dict = Depends(require("manage_policies"))):
+    v = await get_vehicle_or_404(input.vehicle_id)
+    doc = {"id": str(uuid.uuid4()), "vehicle_id": input.vehicle_id,
+           "targa": v.get("targa"), "marca_modello": v.get("marca_modello"),
+           "suggested_from": input.suggested_from, "suggested_until": input.suggested_until,
+           "estimated_saving": input.estimated_saving, "note": input.note,
+           "status": "planned", "created_at": now_iso(), "created_by": user["email"]}
+    await db.susp_plans.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+@api_router.post("/strategy/plan/{plan_id}/apply")
+async def apply_plan(plan_id: str, user: dict = Depends(require("manage_policies"))):
+    pl = await db.susp_plans.find_one({"id": plan_id})
+    if not pl:
+        raise HTTPException(status_code=404, detail="Piano non trovato")
+    if pl.get("status") != "planned":
+        raise HTTPException(status_code=400, detail="Piano non più applicabile")
+    v = await get_vehicle_or_404(pl["vehicle_id"])
+    policy = v.get("policy")
+    if not policy:
+        raise HTTPException(status_code=400, detail="Nessuna polizza da sospendere")
+    if policy.get("status") == "suspended":
+        raise HTTPException(status_code=400, detail="Polizza già sospesa")
+    if policy.get("suspension_limit_reached") or policy.get("cumulative_suspension_days", 0) >= MAX_SUSPENSION_DAYS:
+        raise HTTPException(status_code=400, detail="Limite massimo di sospensione raggiunto")
+    prev = snapshot(v, ["policy"])
+    eff = pl.get("suggested_from") or today_iso()
+    policy["status"] = "suspended"
+    policy["current_suspension_start"] = eff
+    await db.vehicles.update_one({"id": v["id"]}, {"$set": {"policy": policy}})
+    await db.susp_plans.update_one({"id": plan_id}, {"$set": {"status": "applied", "applied_at": now_iso(), "applied_by": user["email"]}})
+    await log_op(user, "policy_suspend", "Sospensione copertura (da piano)", v,
+                 f"Copertura sospesa dal {eff} (piano strategia)", {"type": "set", "set": {"policy": prev["policy"]}}, effective_date=eff)
+    return {"ok": True}
+
+@api_router.post("/strategy/plan/{plan_id}/cancel")
+async def cancel_plan(plan_id: str, user: dict = Depends(require("manage_policies"))):
+    r = await db.susp_plans.update_one({"id": plan_id, "status": "planned"}, {"$set": {"status": "cancelled", "cancelled_at": now_iso()}})
+    if r.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Piano non trovato o non annullabile")
+    return {"ok": True}
+
+@api_router.delete("/strategy/plan/{plan_id}")
+async def delete_plan(plan_id: str, user: dict = Depends(require("manage_policies"))):
+    await db.susp_plans.delete_one({"id": plan_id})
+    return {"ok": True}
+
+@api_router.get("/reports/strategy/excel")
+async def strategy_excel(user: dict = Depends(require("export_reports"))):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    settings = await get_settings()
+    data = await compute_strategy()
+    wb = Workbook(); ws = wb.active; ws.title = "Strategia"
+    ws["A1"] = settings.get("company_name", "FleetCare Autonoleggio"); ws["A1"].font = Font(bold=True, size=14)
+    ws["A2"] = f"Suggerimenti sospensioni · {data['season']['phase_label']}"
+    headers = ["Targa", "Veicolo", "Tipo", "Raccomandazione", "Punteggio", "Da", "A", "Risparmio stimato", "Motivazioni"]
+    for ci, h in enumerate(headers, 1):
+        c = ws.cell(row=4, column=ci, value=h); c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
+    for ri, it in enumerate(data["items"], 5):
+        vals = [it["targa"], it.get("marca_modello") or "", it["tipo"], it["recommendation"], it["score"],
+                (it.get("suggested_from") or ""), (it.get("suggested_until") or ""),
+                (f'{it["estimated_saving"]:.2f}' if it.get("estimated_saving") is not None else "-"),
+                " · ".join(it.get("reasons", []))]
+        for ci, val in enumerate(vals, 1):
+            ws.cell(row=ri, column=ci, value=val)
+    for i, w in enumerate([12, 20, 10, 26, 10, 12, 12, 16, 80], 1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    fname = f"strategia_{datetime.now().strftime('%Y%m%d')}.xlsx"
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": f"attachment; filename={fname}"})
+
+@api_router.get("/reports/strategy/pdf")
+async def strategy_pdf(user: dict = Depends(require("export_reports"))):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
+    settings = await get_settings()
+    data = await compute_strategy()
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), topMargin=1*cm, bottomMargin=1*cm, leftMargin=1*cm, rightMargin=1*cm)
+    styles = getSampleStyleSheet(); small = styles["Normal"]; small.fontSize = 7
+    els = [Paragraph(settings.get("company_name", "FleetCare Autonoleggio"), styles["Title"]),
+           Paragraph(f"Strategia sospensioni · {data['season']['phase_label']}", styles["Heading2"]),
+           Paragraph(f"Generato il {datetime.now().strftime('%d/%m/%Y %H:%M')} · risparmio potenziale € {data['simulation']['total_saving']:.2f} su {data['simulation']['count']} mezzi", styles["Normal"]),
+           Spacer(1, 0.4*cm)]
+    cols = ["Targa", "Tipo", "Raccomandazione", "Pt", "Da", "A", "Risparmio", "Motivazioni"]
+    rows = [cols]
+    for it in data["items"]:
+        rows.append([it["targa"], it["tipo"], it["recommendation"], str(it["score"]),
+                     (it.get("suggested_from") or "")[:10], (it.get("suggested_until") or "")[:10],
+                     (f'€{it["estimated_saving"]:.0f}' if it.get("estimated_saving") is not None else "-"),
+                     Paragraph(escape(" · ".join(it.get("reasons", []))), small)])
+    t = Table(rows, repeatRows=1, colWidths=[2*cm, 1.8*cm, 4*cm, 1*cm, 2*cm, 2*cm, 2*cm, 12*cm])
+    t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                           ("FONTSIZE", (0, 0), (-1, -1), 7), ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CBD5E1")),
+                           ("VALIGN", (0, 0), (-1, -1), "TOP"), ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")])]))
+    els.append(t)
+    doc.build(els); buf.seek(0)
+    fname = f"strategia_{datetime.now().strftime('%Y%m%d')}.pdf"
+    return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={fname}"})
+
+# ================= Manutenzione =================
+DEFAULT_MAINT_TYPES = [("Olio motore", 180), ("Liquido freni", 365), ("Luci", 90),
+                       ("Pneumatici / pressione", 90), ("Liquido refrigerante", 180),
+                       ("Tergicristalli / spazzole", 365), ("Batteria", 365)]
+
+async def seed_maint_types():
+    if await db.maint_types.count_documents({}) == 0:
+        for i, (name, days) in enumerate(DEFAULT_MAINT_TYPES):
+            await db.maint_types.insert_one({"id": str(uuid.uuid4()), "name": name,
+                                             "interval_days": days, "order": i, "active": True, "created_at": now_iso()})
+
+def maint_state(next_due: Optional[date], today: date):
+    if not next_due:
+        return ("never", None)
+    dl = (next_due - today).days
+    if dl < 0:
+        return ("overdue", dl)
+    if dl <= 15:
+        return ("upcoming", dl)
+    return ("ok", dl)
+
+async def latest_checks_map():
+    latest = {}
+    for c in await db.maint_checks.find().to_list(50000):
+        k = (c["vehicle_id"], c["type_id"])
+        if k not in latest or c["checked_at"] > latest[k]["checked_at"]:
+            latest[k] = c
+    return latest
+
+async def fetch_interventions(vehicle_id=None, status=None, date_from=None, date_to=None):
+    q = {}
+    if vehicle_id:
+        q["vehicle_id"] = vehicle_id
+    if status:
+        q["status"] = status
+    items = await db.maint_interventions.find(q).sort("created_at", -1).to_list(50000)
+    vids = {v["id"]: v for v in await db.vehicles.find().to_list(2000)}
+    out = []
+    for it in items:
+        it.pop("_id", None)
+        v = vids.get(it["vehicle_id"]) or {}
+        it["targa"] = v.get("targa") or it.get("targa")
+        it["marca_modello"] = v.get("marca_modello")
+        ref = it.get("done_at") if it.get("status") == "done" else it.get("created_at")
+        if date_from and (ref or "")[:10] < date_from[:10]:
+            continue
+        if date_to and (ref or "")[:10] > date_to[:10]:
+            continue
+        out.append(it)
+    return out
+
+@api_router.get("/maintenance/types")
+async def list_maint_types(user: dict = Depends(get_current_user)):
+    types = await db.maint_types.find({"active": True}).sort("order", 1).to_list(200)
+    return [{"id": t["id"], "name": t["name"], "interval_days": t["interval_days"]} for t in types]
+
+@api_router.post("/maintenance/types")
+async def create_maint_type(input: MaintTypeInput, user: dict = Depends(require("manage_settings"))):
+    n = await db.maint_types.count_documents({})
+    doc = {"id": str(uuid.uuid4()), "name": input.name, "interval_days": int(input.interval_days),
+           "order": n, "active": True, "created_at": now_iso()}
+    await db.maint_types.insert_one(dict(doc)); doc.pop("_id", None)
+    return doc
+
+@api_router.put("/maintenance/types/{type_id}")
+async def update_maint_type(type_id: str, input: MaintTypeInput, user: dict = Depends(require("manage_settings"))):
+    r = await db.maint_types.update_one({"id": type_id}, {"$set": {"name": input.name, "interval_days": int(input.interval_days)}})
+    if r.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Controllo non trovato")
+    return {"ok": True}
+
+@api_router.delete("/maintenance/types/{type_id}")
+async def delete_maint_type(type_id: str, user: dict = Depends(require("manage_settings"))):
+    await db.maint_types.update_one({"id": type_id}, {"$set": {"active": False}})
+    return {"ok": True}
+
+@api_router.get("/maintenance/overview")
+async def maintenance_overview(user: dict = Depends(get_current_user)):
+    types = await db.maint_types.find({"active": True}).sort("order", 1).to_list(200)
+    vehicles = await db.vehicles.find().sort("targa", 1).to_list(2000)
+    today = datetime.now(timezone.utc).date()
+    latest = await latest_checks_map()
+    open_int = {}
+    for it in await db.maint_interventions.find({"status": "open"}).to_list(50000):
+        open_int[it["vehicle_id"]] = open_int.get(it["vehicle_id"], 0) + 1
+    out = []
+    for v in vehicles:
+        controls = []
+        for t in types:
+            c = latest.get((v["id"], t["id"]))
+            if c:
+                nd = parse_date(c["checked_at"]) + timedelta(days=t["interval_days"])
+                st, dl = maint_state(nd, today)
+                controls.append({"type_id": t["id"], "type_name": t["name"], "interval_days": t["interval_days"],
+                                 "last_check": c["checked_at"], "next_due": nd.isoformat(), "state": st, "days_left": dl})
+            else:
+                controls.append({"type_id": t["id"], "type_name": t["name"], "interval_days": t["interval_days"],
+                                 "last_check": None, "next_due": None, "state": "never", "days_left": None})
+        out.append({"vehicle_id": v["id"], "targa": v["targa"], "marca_modello": v.get("marca_modello"),
+                    "tipo": v.get("tipo") or "auto", "controls": controls, "open_interventions": open_int.get(v["id"], 0)})
+    return {"types": [{"id": t["id"], "name": t["name"], "interval_days": t["interval_days"]} for t in types], "vehicles": out}
+
+@api_router.post("/maintenance/checks")
+async def add_maint_check(input: MaintCheckInput, user: dict = Depends(require("manage_maintenance"))):
+    t = await db.maint_types.find_one({"id": input.type_id})
+    if not t:
+        raise HTTPException(status_code=404, detail="Controllo non trovato")
+    v = await get_vehicle_or_404(input.vehicle_id)
+    doc = {"id": str(uuid.uuid4()), "vehicle_id": input.vehicle_id, "type_id": input.type_id,
+           "type_name": t["name"], "checked_at": input.checked_at[:10], "note": input.note,
+           "user_email": user["email"], "user_name": user.get("name"), "created_at": now_iso()}
+    await db.maint_checks.insert_one(dict(doc)); doc.pop("_id", None)
+    await log_op(user, "maint_check", "Controllo effettuato", v,
+                 f"Controllo '{t['name']}' effettuato il {doc['checked_at']}", None, effective_date=doc["checked_at"])
+    return doc
+
+@api_router.get("/maintenance/checks")
+async def list_maint_checks(vehicle_id: Optional[str] = Query(None), type_id: Optional[str] = Query(None),
+                            date_from: Optional[str] = Query(None), date_to: Optional[str] = Query(None),
+                            user: dict = Depends(get_current_user)):
+    q = {}
+    if vehicle_id:
+        q["vehicle_id"] = vehicle_id
+    if type_id:
+        q["type_id"] = type_id
+    if date_from or date_to:
+        rng = {}
+        if date_from:
+            rng["$gte"] = date_from[:10]
+        if date_to:
+            rng["$lte"] = date_to[:10]
+        q["checked_at"] = rng
+    checks = await db.maint_checks.find(q).sort("checked_at", -1).to_list(5000)
+    for c in checks:
+        c.pop("_id", None)
+    return checks
+
+@api_router.get("/maintenance/interventions")
+async def list_interventions(vehicle_id: Optional[str] = Query(None), status: Optional[str] = Query(None),
+                             date_from: Optional[str] = Query(None), date_to: Optional[str] = Query(None),
+                             user: dict = Depends(get_current_user)):
+    return await fetch_interventions(vehicle_id, status, date_from, date_to)
+
+@api_router.post("/maintenance/interventions")
+async def create_intervention(input: InterventionInput, user: dict = Depends(require("manage_maintenance"))):
+    v = await get_vehicle_or_404(input.vehicle_id)
+    doc = {"id": str(uuid.uuid4()), "vehicle_id": input.vehicle_id, "targa": v.get("targa"),
+           "descrizione": input.descrizione, "note": input.note, "status": "open",
+           "costo": None, "created_at": now_iso(), "created_by": user["email"]}
+    await db.maint_interventions.insert_one(dict(doc)); doc.pop("_id", None)
+    await log_op(user, "intervention_add", "Intervento segnalato", v, f"Intervento da fare: {input.descrizione}", None)
+    return doc
+
+@api_router.post("/maintenance/interventions/{iid}/complete")
+async def complete_intervention(iid: str, input: InterventionCompleteInput, user: dict = Depends(require("manage_maintenance"))):
+    it = await db.maint_interventions.find_one({"id": iid})
+    if not it:
+        raise HTTPException(status_code=404, detail="Intervento non trovato")
+    await db.maint_interventions.update_one({"id": iid}, {"$set": {
+        "status": "done", "done_at": input.done_at[:10], "costo": float(input.costo),
+        "done_by": user["email"], "done_note": input.note}})
+    v = await db.vehicles.find_one({"id": it["vehicle_id"]})
+    await log_op(user, "intervention_done", "Intervento effettuato",
+                 {"id": it["vehicle_id"], "targa": (v or {}).get("targa"), "marca_modello": (v or {}).get("marca_modello")},
+                 f"Intervento completato: {it['descrizione']} · € {float(input.costo):.2f}", None, effective_date=input.done_at[:10])
+    return {"ok": True}
+
+@api_router.delete("/maintenance/interventions/{iid}")
+async def delete_intervention(iid: str, user: dict = Depends(require("delete_operations"))):
+    await db.maint_interventions.delete_one({"id": iid})
+    return {"ok": True}
+
+@api_router.get("/maintenance/stats")
+async def maintenance_stats(date_from: Optional[str] = Query(None), date_to: Optional[str] = Query(None),
+                            user: dict = Depends(get_current_user)):
+    rows = await fetch_interventions(None, None, date_from, date_to)
+    total_cost = 0.0; done = 0; open_c = 0; by_vehicle = {}
+    for it in rows:
+        vid = it["vehicle_id"]
+        bv = by_vehicle.setdefault(vid, {"targa": it.get("targa", "?"), "marca_modello": it.get("marca_modello"),
+                                         "cost": 0.0, "done": 0, "open": 0})
+        if it.get("status") == "done":
+            done += 1; c = it.get("costo") or 0.0; total_cost += c; bv["cost"] += c; bv["done"] += 1
+        else:
+            open_c += 1; bv["open"] += 1
+    for bv in by_vehicle.values():
+        bv["cost"] = round(bv["cost"], 2)
+    return {"total_cost": round(total_cost, 2), "done": done, "open": open_c,
+            "by_vehicle": sorted(by_vehicle.values(), key=lambda x: -x["cost"])}
+
+@api_router.get("/reports/maintenance/excel")
+async def maintenance_excel(date_from: Optional[str] = Query(None), date_to: Optional[str] = Query(None),
+                            user: dict = Depends(require("export_reports"))):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    settings = await get_settings()
+    rows = await fetch_interventions(None, None, date_from, date_to)
+    wb = Workbook(); ws = wb.active; ws.title = "Manutenzione"
+    ws["A1"] = settings.get("company_name", "FleetCare Autonoleggio"); ws["A1"].font = Font(bold=True, size=14)
+    period = f"{date_from or '…'} → {date_to or '…'}" if (date_from or date_to) else "tutti i periodi"
+    ws["A2"] = f"Interventi manutenzione · {period}"
+    headers = ["Targa", "Veicolo", "Descrizione", "Stato", "Creato il", "Effettuato il", "Costo", "Note"]
+    for ci, h in enumerate(headers, 1):
+        c = ws.cell(row=4, column=ci, value=h); c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
+    total = 0.0
+    for ri, it in enumerate(rows, 5):
+        cost = it.get("costo") or 0.0
+        if it.get("status") == "done":
+            total += cost
+        vals = [it.get("targa") or "-", it.get("marca_modello") or "-", it.get("descrizione", ""),
+                "Effettuato" if it.get("status") == "done" else "Da fare",
+                (it.get("created_at") or "")[:10], (it.get("done_at") or "")[:10] or "-",
+                (f"{cost:.2f}" if it.get("status") == "done" else "-"), it.get("note") or ""]
+        for ci, val in enumerate(vals, 1):
+            ws.cell(row=ri, column=ci, value=val)
+    tr = len(rows) + 6
+    ws.cell(row=tr, column=6, value="TOTALE").font = Font(bold=True)
+    ws.cell(row=tr, column=7, value=f"{total:.2f}").font = Font(bold=True)
+    for i, w in enumerate([12, 20, 40, 12, 14, 14, 12, 40], 1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    fname = f"manutenzione_{datetime.now().strftime('%Y%m%d')}.xlsx"
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": f"attachment; filename={fname}"})
+
+@api_router.get("/reports/maintenance/pdf")
+async def maintenance_pdf(date_from: Optional[str] = Query(None), date_to: Optional[str] = Query(None),
+                          user: dict = Depends(require("export_reports"))):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
+    settings = await get_settings()
+    rows = await fetch_interventions(None, None, date_from, date_to)
+    total = sum((it.get("costo") or 0.0) for it in rows if it.get("status") == "done")
+    period = f"{date_from or '…'} → {date_to or '…'}" if (date_from or date_to) else "tutti i periodi"
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), topMargin=1*cm, bottomMargin=1*cm, leftMargin=1*cm, rightMargin=1*cm)
+    styles = getSampleStyleSheet(); small = styles["Normal"]; small.fontSize = 7
+    els = [Paragraph(settings.get("company_name", "FleetCare Autonoleggio"), styles["Title"]),
+           Paragraph(f"Interventi manutenzione · {period}", styles["Heading2"]),
+           Paragraph(f"Generato il {datetime.now().strftime('%d/%m/%Y %H:%M')} · costo totale effettuati € {total:.2f}", styles["Normal"]),
+           Spacer(1, 0.4*cm)]
+    cols = ["Targa", "Veicolo", "Descrizione", "Stato", "Effettuato il", "Costo", "Note"]
+    data = [cols]
+    for it in rows:
+        cost = it.get("costo") or 0.0
+        data.append([it.get("targa") or "-", it.get("marca_modello") or "-",
+                     Paragraph(escape(it.get("descrizione", "")), small),
+                     "Effettuato" if it.get("status") == "done" else "Da fare",
+                     (it.get("done_at") or "")[:10] or "-",
+                     (f"€{cost:.0f}" if it.get("status") == "done" else "-"),
+                     Paragraph(escape(it.get("note") or ""), small)])
+    t = Table(data, repeatRows=1, colWidths=[2*cm, 3.5*cm, 8*cm, 2.2*cm, 2.6*cm, 2*cm, 6*cm])
+    t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                           ("FONTSIZE", (0, 0), (-1, -1), 7), ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CBD5E1")),
+                           ("VALIGN", (0, 0), (-1, -1), "TOP"), ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")])]))
+    els.append(t)
+    doc.build(els); buf.seek(0)
+    fname = f"manutenzione_{datetime.now().strftime('%Y%m%d')}.pdf"
+    return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={fname}"})
+
+# ================= Avviso Strategia (email) =================
+def strategy_alert_html(company: str, items: List[dict], data: dict) -> str:
+    rows = ""
+    for it in items:
+        save = f'€ {it["estimated_saving"]:.0f}' if it.get("estimated_saving") is not None else "-"
+        rows += (f'<tr><td style="padding:6px 10px;border-bottom:1px solid #eee">{escape(it["targa"])}</td>'
+                 f'<td style="padding:6px 10px;border-bottom:1px solid #eee">{escape(it.get("marca_modello") or "")}</td>'
+                 f'<td style="padding:6px 10px;border-bottom:1px solid #eee">{escape((it.get("suggested_from") or "")[:10])}</td>'
+                 f'<td style="padding:6px 10px;border-bottom:1px solid #eee;font-weight:bold">{save}</td></tr>')
+    if not rows:
+        rows = '<tr><td colspan="4" style="padding:12px;color:#888">Nessun veicolo da sospendere al momento.</td></tr>'
+    return (f'<table role="presentation" width="100%"><tr><td style="padding:20px;font-family:Arial,sans-serif">'
+            f'<h2 style="color:#0F172A;margin:0 0 4px">{escape(company)}</h2>'
+            f'<p style="color:#475569;margin:0 0 16px">Inizio bassa stagione — veicoli consigliati per la sospensione '
+            f'(risparmio potenziale € {data["simulation"]["total_saving"]:.0f})</p>'
+            f'<table width="100%" style="border-collapse:collapse;font-size:13px">'
+            f'<tr style="background:#0F172A;color:#fff"><th style="padding:6px 10px;text-align:left">Targa</th>'
+            f'<th style="padding:6px 10px;text-align:left">Veicolo</th><th style="padding:6px 10px;text-align:left">Sospendere dal</th>'
+            f'<th style="padding:6px 10px;text-align:left">Risparmio</th></tr>{rows}</table>'
+            f'<p style="font-size:12px;color:#888;margin-top:16px">Inviato da {escape(EMAIL_FROM_NAME)}. '
+            f'Non chiediamo mai password o dati di pagamento via email.</p></td></tr></table>')
+
+async def run_strategy_alert(force: bool = False):
+    settings = await get_settings()
+    today = datetime.now(timezone.utc).date()
+    if not force and (today.day != 1 or today.month != int(settings.get("strategy_alert_month", 11))):
+        return {"sent": 0, "reason": "non è la data di invio configurata"}
+    needs = {}
+    for tp in ("auto", "furgone", "altro"):
+        val = settings.get(f"strategy_target_{tp}")
+        if val:
+            needs[tp] = int(val)
+    data = await compute_strategy(needs=needs or None)
+    to_susp = [i for i in data["items"] if i["policy"] and i["policy"].get("can_suspend")
+               and (i.get("surplus") or i["level"] == "high") and not i.get("planned")]
+    recipients = settings.get("notification_recipients", [])
+    if not recipients:
+        return {"sent": 0, "reason": "nessun destinatario configurato", "items": len(to_susp)}
+    company = settings.get("company_name", "FleetCare Autonoleggio")
+    html = strategy_alert_html(company, to_susp, data)
+    subject = f"Strategia sospensioni — {len(to_susp)} mezzi da sospendere · risparmio € {data['simulation']['total_saving']:.0f}"
+    sent = 0
+    for r in recipients:
+        try:
+            await send_email(to=r, subject=subject, html=html); sent += 1
+        except Exception as e:
+            logger.error(f"strategy alert to {r} failed: {e}")
+    return {"sent": sent, "items": len(to_susp)}
+
+@api_router.post("/strategy/alert/send-now")
+async def strategy_alert_now(user: dict = Depends(require("manage_settings"))):
+    return await run_strategy_alert(force=True)
+
+@api_router.post("/cron/strategy-alert")
+async def cron_strategy_alert(background_tasks: BackgroundTasks, authorization: str = Header(None)):
+    secret = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    provided = authorization[7:] if authorization and authorization.startswith("Bearer ") else ""
+    if not secret or not pysecrets.compare_digest(provided, secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    background_tasks.add_task(run_strategy_alert)
+    return {"accepted": True}
+
 app.include_router(api_router)
 app.add_middleware(CORSMiddleware, allow_credentials=True,
                    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
@@ -1584,6 +2138,10 @@ async def startup():
                 upd["password_hash"] = hash_password(admin_password)
             await db.users.update_one({"email": admin_email}, {"$set": upd})
     await get_settings()
+    await seed_maint_types()
+    await db.maint_checks.create_index([("vehicle_id", 1), ("type_id", 1)])
+    await db.maint_interventions.create_index("vehicle_id")
+    await db.susp_plans.create_index("vehicle_id")
     await db.vehicles.update_many(
         {"policy.tipologia": "semestrale"},
         {"$set": {"policy.tipologia": "annuale", "policy.frazionamento": "semestrale"}})
