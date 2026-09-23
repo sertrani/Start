@@ -11,6 +11,7 @@ import Calendar from "@/pages/Calendar";
 import Monitor from "@/pages/Monitor";
 import Settings from "@/pages/Settings";
 import Storico from "@/pages/Storico";
+import Strategia from "@/pages/Strategia";
 
 function ProtectedRoute({ children }) {
   const { user } = useAuth();
@@ -37,6 +38,7 @@ function AppRoutes() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/calendario" element={<Calendar />} />
         <Route path="/monitor" element={<Monitor />} />
+        <Route path="/strategia" element={<Strategia />} />
         <Route path="/storico" element={<Storico />} />
         <Route path="/impostazioni" element={<Settings />} />
       </Route>

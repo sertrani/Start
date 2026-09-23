@@ -9,7 +9,16 @@ import LoginLog from "@/components/LoginLog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Plus, Trash2, Mail, Building2, ImageUp, Send, Bell } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Loader2, Plus, Trash2, Mail, Building2, ImageUp, Send, Bell, CalendarRange } from "lucide-react";
+
+const MONTHS = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno", "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"];
 
 export default function Settings() {
   const { settings, reload } = useSettings();
@@ -18,6 +27,8 @@ export default function Settings() {
   const [company, setCompany] = useState("");
   const [days, setDays] = useState({ bollo: 30, collaudo: 30, polizza: 30 });
   const [bellDays, setBellDays] = useState(7);
+  const [seasonStart, setSeasonStart] = useState(4);
+  const [seasonEnd, setSeasonEnd] = useState(10);
   const [recipients, setRecipients] = useState([""]);
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
@@ -29,6 +40,8 @@ export default function Settings() {
       setCompany(settings.company_name || "");
       setDays(settings.notification_days || { bollo: 30, collaudo: 30, polizza: 30 });
       setBellDays(settings.bell_days ?? 7);
+      setSeasonStart(settings.season_start_month ?? 4);
+      setSeasonEnd(settings.season_end_month ?? 10);
       setRecipients(settings.notification_recipients?.length ? settings.notification_recipients : [""]);
     }
   }, [settings]);
@@ -50,6 +63,8 @@ export default function Settings() {
         company_name: company,
         notification_days: { bollo: Number(days.bollo), collaudo: Number(days.collaudo), polizza: Number(days.polizza) },
         bell_days: Number(bellDays),
+        season_start_month: Number(seasonStart),
+        season_end_month: Number(seasonEnd),
         notification_recipients: recipients.filter((r) => r.trim()),
       });
       toast.success("Impostazioni salvate");
@@ -168,6 +183,35 @@ export default function Settings() {
           </Button>
         )}
         <p className="text-xs text-slate-400">Riepilogo automatico ogni mattina alle 07:00 ai destinatari configurati.</p>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+        <h2 className="flex items-center gap-2 font-heading font-semibold text-slate-800"><CalendarRange className="h-4 w-4 text-blue-600" /> Stagione operativa</h2>
+        <p className="text-sm text-slate-500">Definisce i mesi di apertura dell'attività. La pagina Strategia usa questi mesi per consigliare quando sospendere i veicoli (picco luglio–agosto).</p>
+        <div className="grid grid-cols-2 gap-3 max-w-md">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-slate-500">Mese di apertura</Label>
+            <Select value={String(seasonStart)} onValueChange={(v) => setSeasonStart(Number(v))} disabled={!canSettings}>
+              <SelectTrigger data-testid="season-start-select"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {MONTHS.map((m, i) => (
+                  <SelectItem key={i} value={String(i + 1)}>{m}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-slate-500">Mese di chiusura</Label>
+            <Select value={String(seasonEnd)} onValueChange={(v) => setSeasonEnd(Number(v))} disabled={!canSettings}>
+              <SelectTrigger data-testid="season-end-select"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {MONTHS.map((m, i) => (
+                  <SelectItem key={i} value={String(i + 1)}>{m}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
       </section>
 
       {canSettings && (

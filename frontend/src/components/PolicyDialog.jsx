@@ -21,10 +21,10 @@ import { Progress } from "@/components/ui/progress";
 import api, { apiErrorMessage } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { fmtDate, POLICY_LABELS } from "@/lib/format";
+import { fmtDate, POLICY_LABELS, FRAZIONAMENTO_LABELS } from "@/lib/format";
 import { Loader2, PauseCircle, PlayCircle, AlertTriangle, History, ShieldCheck, RefreshCw } from "lucide-react";
 
-const AUTO_GRACE = ["annuale", "semestrale"];
+const AUTO_GRACE = ["annuale"];
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
 export default function PolicyDialog({ open, onOpenChange, vehicle, onSaved }) {
@@ -40,6 +40,7 @@ export default function PolicyDialog({ open, onOpenChange, vehicle, onSaved }) {
     importo_premio: p?.importo_premio ?? "",
     importo_rata: p?.importo_rata ?? "",
     grace_period: p?.grace_period ?? false,
+    frazionamento: p?.frazionamento || "unica",
   });
   const [resetSusp, setResetSusp] = useState(true);
   const [effDate, setEffDate] = useState(todayStr());
@@ -58,6 +59,7 @@ export default function PolicyDialog({ open, onOpenChange, vehicle, onSaved }) {
     importo_premio: form.importo_premio === "" ? null : parseFloat(form.importo_premio),
     importo_rata: form.importo_rata === "" ? null : parseFloat(form.importo_rata),
     grace_period: autoGrace ? true : !!form.grace_period,
+    frazionamento: form.tipologia === "annuale" ? form.frazionamento : null,
   });
 
   const savePolicy = async (e) => {
@@ -145,6 +147,20 @@ export default function PolicyDialog({ open, onOpenChange, vehicle, onSaved }) {
               <Input type="date" value={form.data_stipula} onChange={set("data_stipula")} required data-testid="policy-start-input" />
             </div>
           </div>
+          {form.tipologia === "annuale" && (
+            <div className="space-y-1.5" data-testid="policy-frazionamento-wrap">
+              <Label>Frazionamento premio</Label>
+              <Select value={form.frazionamento} onValueChange={(v) => setForm({ ...form, frazionamento: v })}>
+                <SelectTrigger data-testid="policy-frazionamento-select"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Object.entries(FRAZIONAMENTO_LABELS).map(([k, v]) => (
+                    <SelectItem key={k} value={k}>{v}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-slate-400">Rateizzazione del premio annuale: unica soluzione, semestrale, mensile…</p>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Scadenza rata intermedia</Label>
@@ -171,7 +187,7 @@ export default function PolicyDialog({ open, onOpenChange, vehicle, onSaved }) {
             <div>
               <Label htmlFor="grace" className="text-sm">Conteggia il comporto (15 giorni)</Label>
               <p className="text-xs text-slate-500 mt-0.5">
-                {autoGrace ? "Automatico per polizze annuali e semestrali." : "Per questa tipologia decidi se estendere la copertura di 15 giorni oltre la scadenza."}
+                {autoGrace ? "Automatico per le polizze annuali." : "Per questa tipologia decidi se estendere la copertura di 15 giorni oltre la scadenza."}
               </p>
             </div>
           </div>

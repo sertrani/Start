@@ -11,17 +11,26 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { TIPO_LABELS } from "@/lib/format";
 import api, { apiErrorMessage } from "@/lib/api";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 
-export default function VehicleFormDialog({ open, onOpenChange, vehicle, onSaved }) {
-  const editing = !!vehicle;
+export default function VehicleFormDialog({ open, onOpenChange, vehicle, onSaved, duplicate = false }) {
+  const editing = !!vehicle && !duplicate;
   const [form, setForm] = useState({
-    targa: vehicle?.targa || "",
+    targa: duplicate ? "" : vehicle?.targa || "",
     marca_modello: vehicle?.marca_modello || "",
-    data_immatricolazione: vehicle?.data_immatricolazione?.slice(0, 10) || "",
-    bollo_scadenza: vehicle?.bollo_scadenza?.slice(0, 10) || "",
+    data_immatricolazione: duplicate ? "" : vehicle?.data_immatricolazione?.slice(0, 10) || "",
+    bollo_scadenza: duplicate ? "" : vehicle?.bollo_scadenza?.slice(0, 10) || "",
+    tipo: vehicle?.tipo || "auto",
     note: vehicle?.note || "",
   });
   const [loading, setLoading] = useState(false);
@@ -36,6 +45,7 @@ export default function VehicleFormDialog({ open, onOpenChange, vehicle, onSaved
         marca_modello: form.marca_modello,
         data_immatricolazione: form.data_immatricolazione,
         bollo_scadenza: form.bollo_scadenza || null,
+        tipo: form.tipo,
         note: form.note || null,
       };
       if (editing) await api.put(`/vehicles/${vehicle.id}`, payload);
@@ -50,21 +60,40 @@ export default function VehicleFormDialog({ open, onOpenChange, vehicle, onSaved
     }
   };
 
+  const title = duplicate ? "Duplica veicolo" : editing ? "Modifica veicolo" : "Nuovo veicolo";
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md" data-testid="vehicle-form-dialog">
         <DialogHeader>
-          <DialogTitle className="font-heading">{editing ? "Modifica veicolo" : "Nuovo veicolo"}</DialogTitle>
-          <DialogDescription>Dati identificativi del veicolo. Il collaudo si gestisce dalla scheda dedicata.</DialogDescription>
+          <DialogTitle className="font-heading">{title}</DialogTitle>
+          <DialogDescription>
+            {duplicate
+              ? "Dati precompilati dal veicolo esistente: inserisci targa e immatricolazione del nuovo mezzo."
+              : "Dati identificativi del veicolo. Il collaudo si gestisce dalla scheda dedicata."}
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-4">
           <div className="space-y-1.5">
             <Label>Targa</Label>
             <Input value={form.targa} onChange={set("targa")} placeholder="AB123CD" className="uppercase font-targa" required data-testid="vehicle-targa-input" />
           </div>
-          <div className="space-y-1.5">
-            <Label>Marca / Modello</Label>
-            <Input value={form.marca_modello} onChange={set("marca_modello")} placeholder="Fiat Panda" required data-testid="vehicle-model-input" />
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Marca / Modello</Label>
+              <Input value={form.marca_modello} onChange={set("marca_modello")} placeholder="Fiat Panda" required data-testid="vehicle-model-input" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Tipo veicolo</Label>
+              <Select value={form.tipo} onValueChange={(v) => setForm({ ...form, tipo: v })}>
+                <SelectTrigger data-testid="vehicle-tipo-select"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Object.entries(TIPO_LABELS).map(([k, v]) => (
+                    <SelectItem key={k} value={k}>{v}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">

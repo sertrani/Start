@@ -41,8 +41,10 @@ logger = logging.getLogger(__name__)
 JWT_ALGORITHM = "HS256"
 MAX_SUSPENSION_DAYS = 304
 GRACE_DAYS = 15
-POLICY_TYPES = ["annuale", "semestrale", "quadrimestrale", "trimestrale", "mensile", "a_data_fissa"]
-GRACE_AUTO_TYPES = {"annuale", "semestrale"}
+POLICY_TYPES = ["annuale", "quadrimestrale", "trimestrale", "mensile", "a_data_fissa"]
+FRAZIONAMENTO_TYPES = ["unica", "semestrale", "quadrimestrale", "trimestrale", "mensile"]
+GRACE_AUTO_TYPES = {"annuale"}
+VEHICLE_TYPES = ["auto", "furgone", "altro"]
 DOC_TYPES = ["libretto", "carta_circolazione", "polizza", "altro"]
 
 PERMISSIONS = ["manage_vehicles", "manage_policies", "manage_payments",
@@ -269,6 +271,7 @@ class Policy(BaseModel):
     importo_premio: Optional[float] = None
     importo_rata: Optional[float] = None
     grace_period: Optional[bool] = False
+    frazionamento: Optional[str] = None
 
 class RenewInput(Policy):
     reset_suspensions: bool = False
@@ -279,6 +282,7 @@ class VehicleInput(BaseModel):
     data_immatricolazione: str
     bollo_scadenza: Optional[str] = None
     note: Optional[str] = Field(None, max_length=2000)
+    tipo: Optional[str] = "auto"
 
 class CollaudoInput(BaseModel):
     data_collaudo: str
@@ -304,6 +308,8 @@ class SettingsInput(BaseModel):
     notification_recipients: List[str] = []
     notification_days: NotificationDays = NotificationDays()
     bell_days: int = Field(7, ge=0, le=365)
+    season_start_month: int = Field(4, ge=1, le=12)
+    season_end_month: int = Field(10, ge=1, le=12)
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -428,6 +434,7 @@ def build_vehicle_view(v: dict) -> dict:
             "scadenza_rata_intermedia": policy.get("scadenza_rata_intermedia"),
             "scadenza_contratto": policy.get("scadenza_contratto"),
             "importo_premio": policy.get("importo_premio"), "importo_rata": policy.get("importo_rata"),
+            "frazionamento": policy.get("frazionamento"),
             "grace_period": bool(policy.get("grace_period")), "grace_applies": g_applies,
             "grace_end": grace_end.isoformat() if grace_end else None,
             "status": policy.get("status", "active"), "rata_state": rata_state, "rata_days": rata_days,
@@ -465,7 +472,8 @@ async def get_settings() -> dict:
     s = await db.settings.find_one({"key": "app"})
     if not s:
         s = {"key": "app", "company_name": "FleetCare Autonoleggio", "notification_recipients": [],
-             "notification_days": {"bollo": 30, "collaudo": 30, "polizza": 30}, "bell_days": 7, "logo_path": None}
+             "notification_days": {"bollo": 30, "collaudo": 30, "polizza": 30}, "bell_days": 7,
+             "season_start_month": 4, "season_end_month": 10, "logo_path": None}
         await db.settings.insert_one(dict(s))
     s.pop("_id", None)
     if "notification_days" not in s:
@@ -473,6 +481,8 @@ async def get_settings() -> dict:
         s["notification_days"] = {"bollo": legacy, "collaudo": legacy, "polizza": legacy}
     if "bell_days" not in s:
         s["bell_days"] = 7
+    s.setdefault("season_start_month", 4)
+    s.setdefault("season_end_month", 10)
     return s
 
 # ---------------- Audit ----------------
@@ -618,7 +628,7 @@ async def get_vehicle(vehicle_id: str, user: dict = Depends(get_current_user)):
 @api_router.put("/vehicles/{vehicle_id}")
 async def update_vehicle(vehicle_id: str, input: VehicleInput, user: dict = Depends(require("manage_vehicles"))):
     v = await get_vehicle_or_404(vehicle_id)
-    prev = snapshot(v, ["targa", "marca_modello", "data_immatricolazione", "bollo_scadenza", "note"])
+    prev = snapshot(v, ["targa", "marca_modello", "data_immatricolazione", "bollo_scadenza", "note", "tipo"])
     upd = input.model_dump()
     upd["targa"] = upd["targa"].upper().strip()
     await db.vehicles.update_one({"id": vehicle_id}, {"$set": upd})
@@ -697,6 +707,7 @@ def build_policy(input: Policy, base: dict) -> dict:
             "scadenza_rata_intermedia": input.scadenza_rata_intermedia,
             "scadenza_contratto": input.scadenza_contratto, "importo_premio": input.importo_premio,
             "importo_rata": input.importo_rata, "grace_period": bool(input.grace_period),
+            "frazionamento": (input.frazionamento if input.tipologia == "annuale" else None),
             "status": base.get("status", "active"),
             "cumulative_suspension_days": base.get("cumulative_suspension_days", 0),
             "current_suspension_start": base.get("current_suspension_start"),
@@ -1140,6 +1151,146 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
     return {"total": total, "can_circulate": can, "cannot_circulate": cannot,
             "suspended": suspended, "upcoming_30": upcoming}
 
+# ---------------- Strategia sospensioni ----------------
+PEAK_MONTHS = {7, 8}
+PHASE_LABEL = {"closed": "Bassa stagione (attività chiusa)",
+               "shoulder": "Stagione di spalla", "peak": "Alta stagione (picco luglio–agosto)"}
+PHASE_DEMAND = {"closed": 90.0, "shoulder": 45.0, "peak": 0.0}
+TIPO_WEIGHT = {"auto": 0.7, "furgone": 1.0, "altro": 1.0}
+
+def season_phase(d: date, start_m: int, end_m: int) -> str:
+    m = d.month
+    in_season = (start_m <= m <= end_m) if start_m <= end_m else (m >= start_m or m <= end_m)
+    if not in_season:
+        return "closed"
+    return "peak" if m in PEAK_MONTHS else "shoulder"
+
+def next_peak_prep(today: date) -> date:
+    cand = date(today.year, 7, 1) - timedelta(days=15)
+    return cand if today < cand else date(today.year + 1, 7, 1) - timedelta(days=15)
+
+def strategy_for_vehicle(view: dict, phase: str, today: date, start_m: int) -> dict:
+    p = view.get("policy")
+    tipo = view.get("tipo") or "auto"
+    base = {"vehicle_id": view["id"], "targa": view["targa"], "marca_modello": view.get("marca_modello"),
+            "tipo": tipo, "can_circulate": view.get("can_circulate")}
+    if not p:
+        return {**base, "score": 0, "level": "none", "recommendation": "Nessuna polizza",
+                "reasons": ["Nessuna polizza assicurativa: non c'è copertura da sospendere."],
+                "blockers": [], "estimated_saving": None, "suggested_from": None,
+                "suggested_until": None, "policy": None}
+
+    contract = parse_date(p.get("scadenza_contratto"))
+    blockers = []
+    suspended = p.get("status") == "suspended"
+    if suspended:
+        blockers.append("Polizza già sospesa")
+    elif not p.get("can_suspend"):
+        blockers.append("Limite di 10 mesi di sospensione raggiunto" if p.get("suspension_limit_reached")
+                        else "Sospensione non disponibile")
+    in_grace_block = False
+    if contract and contract < today <= contract + timedelta(days=GRACE_DAYS):
+        in_grace_block = True
+        blockers.append("Nei 15 giorni di comporto di legge: sospensione non consentita")
+
+    cost_events = []
+    if view.get("collaudo_deadline"):
+        cost_events.append(("Collaudo/revisione", parse_date(view["collaudo_deadline"]), 120.0))
+    if contract:
+        cost_events.append(("Rinnovo polizza", contract, p.get("importo_premio") or 300.0))
+    rata = parse_date(p.get("scadenza_rata_intermedia"))
+    if rata:
+        cost_events.append(("Rata polizza", rata, p.get("importo_rata") or 150.0))
+    upcoming = [(lbl, dt, amt, (dt - today).days) for (lbl, dt, amt) in cost_events
+                if dt and -15 <= (dt - today).days <= 210]
+    upcoming.sort(key=lambda x: x[3])
+
+    reasons = []
+    if phase == "closed":
+        reasons.append("Siamo in bassa stagione (attività chiusa): la richiesta di veicoli è minima.")
+    elif phase == "peak":
+        reasons.append("Alta stagione (luglio–agosto): il veicolo è quasi certamente necessario.")
+    else:
+        reasons.append("Stagione di spalla: richiesta moderata, valuta caso per caso.")
+
+    if tipo != "auto" and phase != "peak":
+        reasons.append(f"Fuori dal picco servono soprattutto auto: questo mezzo ({tipo}) è un buon candidato alla sospensione.")
+    elif tipo == "auto":
+        reasons.append("È un'auto: potrebbe servire anche fuori dal picco, valuta la reale necessità.")
+
+    econ = 0.0
+    if upcoming:
+        lbl, dt, amt, dd = upcoming[0]
+        proximity = max(0.0, 100.0 * (1 - max(dd, 0) / 180.0))
+        amount_factor = min(1.0, (amt or 0) / 1000.0)
+        econ = proximity * (0.6 + 0.4 * amount_factor)
+        if dd < 0:
+            reasons.append(f"{lbl} già scaduto da {abs(dd)} gg (~€{amt:.0f}).")
+        else:
+            reasons.append(f"{lbl} in scadenza tra {dd} gg (~€{amt:.0f}): sospendendo ora rimandi l'esborso a stagione avviata.")
+        if dt.month in (start_m, (start_m - 1) or 12):
+            reasons.append("L'esborso cade a inizio stagione, periodo di scarsa liquidità: meglio pianificarlo ad attività avviata.")
+
+    type_demand = min(100.0, PHASE_DEMAND.get(phase, 45.0) * TIPO_WEIGHT.get(tipo, 1.0))
+    score = 0.55 * econ + 0.45 * type_demand
+    if phase == "peak":
+        score *= 0.2
+    if blockers:
+        score = min(score, 15.0)
+    score = int(round(min(100.0, max(0.0, score))))
+
+    sug_from = today if not in_grace_block else (contract + timedelta(days=GRACE_DAYS + 1))
+    sug_until = next_peak_prep(today)
+    remaining = MAX_SUSPENSION_DAYS - p.get("cumulative_suspension_days", 0)
+    if sug_until <= sug_from:
+        sug_until = sug_from + timedelta(days=min(90, max(remaining, 0)))
+    if (sug_until - sug_from).days > remaining:
+        sug_until = sug_from + timedelta(days=max(remaining, 0))
+
+    estimated_saving = None
+    if p.get("importo_premio") and sug_until > sug_from:
+        estimated_saving = round(p["importo_premio"] * (sug_until - sug_from).days / 365.0, 2)
+
+    if suspended:
+        level, recommendation = "suspended", "Già sospesa"
+    elif not p.get("can_suspend"):
+        level, recommendation = "low", "Non sospendibile"
+    elif score >= 60:
+        level, recommendation = "high", "Sospendi ora"
+    elif score >= 35:
+        level, recommendation = "medium", "Valuta sospensione"
+    else:
+        level, recommendation = "low", "Mantieni attivo"
+
+    return {**base, "score": score, "level": level, "recommendation": recommendation,
+            "reasons": reasons, "blockers": blockers, "estimated_saving": estimated_saving,
+            "suggested_from": sug_from.isoformat(), "suggested_until": sug_until.isoformat(),
+            "policy": {"compagnia": p.get("compagnia"), "scadenza_contratto": p.get("scadenza_contratto"),
+                       "status": p.get("status"),
+                       "cumulative_suspension_days": p.get("cumulative_suspension_days", 0),
+                       "max_suspension_days": p.get("max_suspension_days", MAX_SUSPENSION_DAYS),
+                       "can_suspend": p.get("can_suspend", False),
+                       "importo_premio": p.get("importo_premio")}}
+
+@api_router.get("/strategy")
+async def strategy(user: dict = Depends(get_current_user)):
+    settings = await get_settings()
+    start_m = int(settings.get("season_start_month", 4))
+    end_m = int(settings.get("season_end_month", 10))
+    today = datetime.now(timezone.utc).date()
+    phase = season_phase(today, start_m, end_m)
+    vehicles = await db.vehicles.find().to_list(2000)
+    items = []
+    for v in vehicles:
+        if v.get("policy"):
+            normalize_policy_suspension(v["policy"])
+        items.append(strategy_for_vehicle(build_vehicle_view(v), phase, today, start_m))
+    items.sort(key=lambda x: x["score"], reverse=True)
+    opportunities = sum(1 for i in items if i["level"] == "high")
+    return {"today": today.isoformat(),
+            "season": {"start": start_m, "end": end_m, "phase": phase, "phase_label": PHASE_LABEL.get(phase)},
+            "items": items, "opportunities": opportunities}
+
 def vehicle_events(view: dict) -> List[dict]:
     ev = []
     if view.get("bollo_scadenza"):
@@ -1290,6 +1441,8 @@ async def update_settings(input: SettingsInput, user: dict = Depends(require("ma
         "notification_recipients": recipients,
         "notification_days": {"bollo": max(1, nd.bollo), "collaudo": max(1, nd.collaudo), "polizza": max(1, nd.polizza)},
         "bell_days": max(0, int(input.bell_days)),
+        "season_start_month": int(input.season_start_month),
+        "season_end_month": int(input.season_end_month),
     }}, upsert=True)
     return await get_settings()
 
@@ -1431,6 +1584,9 @@ async def startup():
                 upd["password_hash"] = hash_password(admin_password)
             await db.users.update_one({"email": admin_email}, {"$set": upd})
     await get_settings()
+    await db.vehicles.update_many(
+        {"policy.tipologia": "semestrale"},
+        {"$set": {"policy.tipologia": "annuale", "policy.frazionamento": "semestrale"}})
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

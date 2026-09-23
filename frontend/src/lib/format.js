@@ -12,11 +12,24 @@ export function eur(v) {
 
 export const POLICY_LABELS = {
   annuale: "Annuale",
-  semestrale: "Semestrale",
   quadrimestrale: "Quadrimestrale",
   trimestrale: "Trimestrale",
   mensile: "Mensile",
   a_data_fissa: "A data fissa",
+};
+
+export const FRAZIONAMENTO_LABELS = {
+  unica: "Premio unico",
+  semestrale: "Semestrale",
+  quadrimestrale: "Quadrimestrale",
+  trimestrale: "Trimestrale",
+  mensile: "Mensile",
+};
+
+export const TIPO_LABELS = {
+  auto: "Auto",
+  furgone: "Furgone / Commerciale",
+  altro: "Altro",
 };
 
 export const DOC_LABELS = {

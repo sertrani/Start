@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import api, { apiErrorMessage } from "@/lib/api";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,6 +23,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useAuth } from "@/context/AuthContext";
 import VehicleCard from "@/components/VehicleCard";
+import FleetTable from "@/components/FleetTable";
 import VehicleFormDialog from "@/components/VehicleFormDialog";
 import PolicyDialog from "@/components/PolicyDialog";
 import CollaudoDialog from "@/components/CollaudoDialog";
@@ -32,6 +41,8 @@ import {
   FileSpreadsheet,
   FileText,
   LayoutGrid,
+  Rows3,
+  Lightbulb,
 } from "lucide-react";
 
 const FILTERS = [
@@ -42,6 +53,20 @@ const FILTERS = [
   { key: "suspended", label: "Polizze sospese", testid: "fleet-status-filter-suspended" },
   { key: "bollo", label: "Bollo scaduto", testid: "fleet-status-filter-bollo" },
 ];
+
+const SORTS = [
+  { key: "deadline", label: "Scadenza più vicina" },
+  { key: "targa", label: "Targa (A→Z)" },
+  { key: "modello", label: "Modello (A→Z)" },
+  { key: "circulation", label: "Stato circolazione" },
+];
+
+function nearestDays(v) {
+  const vals = [v.collaudo_days, v.insurance_days, v.bollo_days, v.policy?.rata_days].filter(
+    (d) => d !== null && d !== undefined
+  );
+  return vals.length ? Math.min(...vals) : Infinity;
+}
 
 function Kpi({ icon: Icon, label, value, tone, testid }) {
   const tones = {
@@ -66,14 +91,19 @@ function Kpi({ icon: Icon, label, value, tone, testid }) {
 
 export default function Dashboard() {
   const { hasPerm } = useAuth();
+  const navigate = useNavigate();
   const [vehicles, setVehicles] = useState([]);
   const [stats, setStats] = useState(null);
+  const [opportunities, setOpportunities] = useState(0);
   const [filter, setFilter] = useState("all");
+  const [sort, setSort] = useState("deadline");
+  const [view, setView] = useState("grid");
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editVehicle, setEditVehicle] = useState(null);
+  const [duplicateMode, setDuplicateMode] = useState(false);
   const [policyVehicle, setPolicyVehicle] = useState(null);
   const [collaudoVehicle, setCollaudoVehicle] = useState(null);
   const [docsVehicle, setDocsVehicle] = useState(null);
@@ -96,6 +126,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     load();
+    api.get("/strategy").then((res) => setOpportunities(res.data.opportunities || 0)).catch(() => {});
   }, []);
 
   const filtered = useMemo(() => {
@@ -116,10 +147,14 @@ export default function Dashboard() {
       const q = query.toLowerCase();
       list = list.filter((v) => v.targa.toLowerCase().includes(q) || v.marca_modello.toLowerCase().includes(q));
     }
-    return list;
-  }, [vehicles, filter, query]);
+    const sorted = [...list];
+    if (sort === "deadline") sorted.sort((a, b) => nearestDays(a) - nearestDays(b));
+    else if (sort === "targa") sorted.sort((a, b) => a.targa.localeCompare(b.targa));
+    else if (sort === "modello") sorted.sort((a, b) => a.marca_modello.localeCompare(b.marca_modello));
+    else if (sort === "circulation") sorted.sort((a, b) => Number(a.can_circulate) - Number(b.can_circulate));
+    return sorted;
+  }, [vehicles, filter, query, sort]);
 
-  // keep open sub-dialogs in sync with fresh data
   const syncOpen = (list) => {
     const find = (cur) => (cur ? list.find((x) => x.id === cur.id) || null : null);
     setPolicyVehicle((c) => find(c));
@@ -129,6 +164,23 @@ export default function Dashboard() {
   const refresh = async () => {
     const list = await load();
     if (list) syncOpen(list);
+    api.get("/strategy").then((res) => setOpportunities(res.data.opportunities || 0)).catch(() => {});
+  };
+
+  const openNew = () => {
+    setEditVehicle(null);
+    setDuplicateMode(false);
+    setFormOpen(true);
+  };
+  const openEdit = (veh) => {
+    setEditVehicle(veh);
+    setDuplicateMode(false);
+    setFormOpen(true);
+  };
+  const openDuplicate = (veh) => {
+    setEditVehicle(veh);
+    setDuplicateMode(true);
+    setFormOpen(true);
   };
 
   const download = async (kind) => {
@@ -157,6 +209,17 @@ export default function Dashboard() {
     }
   };
 
+  const cardHandlers = {
+    onEdit: openEdit,
+    onDuplicate: openDuplicate,
+    onPolicy: setPolicyVehicle,
+    onCollaudo: setCollaudoVehicle,
+    onDocs: setDocsVehicle,
+    onBollo: setBolloVehicle,
+    onHistory: setHistoryVehicle,
+    onDelete: setDeleteVehicle,
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -167,6 +230,16 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex gap-2">
+          {opportunities > 0 && (
+            <Button
+              variant="outline"
+              className="border-amber-300 text-amber-700 hover:bg-amber-50"
+              onClick={() => navigate("/strategia")}
+              data-testid="strategy-opportunity-button"
+            >
+              <Lightbulb className="h-4 w-4 mr-1.5" /> {opportunities} opportunità
+            </Button>
+          )}
           {hasPerm("export_reports") && (
             <>
               <Button variant="outline" onClick={() => download("excel")} data-testid="export-excel-button">
@@ -178,13 +251,7 @@ export default function Dashboard() {
             </>
           )}
           {hasPerm("manage_vehicles") && (
-            <Button
-              onClick={() => {
-                setEditVehicle(null);
-                setFormOpen(true);
-              }}
-              data-testid="add-vehicle-button"
-            >
+            <Button onClick={openNew} data-testid="add-vehicle-button">
               <Plus className="h-4 w-4 mr-1.5" /> Veicolo
             </Button>
           )}
@@ -199,7 +266,7 @@ export default function Dashboard() {
         <Kpi icon={CalendarClock} label="Scad. 30 gg" value={stats?.upcoming_30 ?? "—"} tone="amber" testid="kpi-upcoming" />
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3 sm:items-center justify-between">
+      <div className="flex flex-col lg:flex-row gap-3 lg:items-center justify-between">
         <div className="flex flex-wrap gap-2">
           {FILTERS.map((f) => (
             <button
@@ -216,9 +283,37 @@ export default function Dashboard() {
             </button>
           ))}
         </div>
-        <div className="relative sm:w-64">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cerca targa o modello…" className="pl-9" data-testid="search-input" />
+        <div className="flex gap-2 items-center">
+          <Select value={sort} onValueChange={setSort}>
+            <SelectTrigger className="w-[190px]" data-testid="fleet-sort-select"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {SORTS.map((s) => (
+                <SelectItem key={s.key} value={s.key}>{s.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+            <button
+              onClick={() => setView("grid")}
+              className={`px-2.5 py-2 ${view === "grid" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`}
+              title="Griglia"
+              data-testid="fleet-view-grid"
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setView("table")}
+              className={`px-2.5 py-2 ${view === "table" ? "bg-slate-900 text-white" : "bg-white text-slate-500"}`}
+              title="Tabella"
+              data-testid="fleet-view-table"
+            >
+              <Rows3 className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="relative sm:w-56">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cerca targa o modello…" className="pl-9" data-testid="search-input" />
+          </div>
         </div>
       </div>
 
@@ -232,29 +327,24 @@ export default function Dashboard() {
             {vehicles.length === 0 ? "Aggiungi il primo veicolo alla flotta." : "Modifica i filtri di ricerca."}
           </p>
         </div>
+      ) : view === "table" ? (
+        <FleetTable vehicles={filtered} {...cardHandlers} />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" data-testid="vehicle-grid">
           {filtered.map((v) => (
-            <VehicleCard
-              key={v.id}
-              v={v}
-              onEdit={(veh) => {
-                setEditVehicle(veh);
-                setFormOpen(true);
-              }}
-              onPolicy={setPolicyVehicle}
-              onCollaudo={setCollaudoVehicle}
-              onDocs={setDocsVehicle}
-              onBollo={setBolloVehicle}
-              onHistory={setHistoryVehicle}
-              onDelete={setDeleteVehicle}
-            />
+            <VehicleCard key={v.id} v={v} {...cardHandlers} />
           ))}
         </div>
       )}
 
       {formOpen && (
-        <VehicleFormDialog open={formOpen} onOpenChange={setFormOpen} vehicle={editVehicle} onSaved={load} />
+        <VehicleFormDialog
+          open={formOpen}
+          onOpenChange={setFormOpen}
+          vehicle={editVehicle}
+          duplicate={duplicateMode}
+          onSaved={load}
+        />
       )}
       {policyVehicle && (
         <PolicyDialog open={!!policyVehicle} onOpenChange={(o) => !o && setPolicyVehicle(null)} vehicle={policyVehicle} onSaved={refresh} />
