@@ -17,6 +17,16 @@ Titolare/operatore autonoleggio (single admin: sertrani@gmail.com).
 - Sospensione: giorni cumulativi tra sospensioni/riattivazioni multiple; max 10 mesi = 304 giorni; auto-riattivazione al raggiungimento del limite e blocco di ulteriori sospensioni.
 - Circolabilità: bloccata SOLO da collaudo scaduto O polizza scaduta/sospesa. Bollo scaduto NON blocca (solo avviso).
 
+## Implementato (2026-09-23, iterazione 8)
+- Costo collaudo per veicolo (`costo_collaudo`) usato per stimare con precisione il risparmio in Strategia; incluso nello snapshot per l'annullamento.
+- Piano sospensioni: da Strategia si salva un suggerimento come azione pianificata (planned/applied/cancelled). Endpoint `/api/strategy/plan` (create/list/apply/cancel/delete). "Applica" sospende la polizza dalla data suggerita.
+- Simulatore risparmio: `/api/strategy?until=&need_auto=&need_furgone=&need_altro=` → `simulation{until,total_saving,count}`. Fabbisogno per tipo (auto/furgone/altro): l'eccedenza per tipo viene consigliata alla sospensione, tenendo i mezzi più necessari.
+- Report Strategia PDF+Excel (`/api/reports/strategy/{excel,pdf}`).
+- Avviso email Strategia in mese configurabile (`strategy_alert_month`) + `/api/strategy/alert/send-now` + cron `strategy-avviso` (crons.yml).
+- Modulo Manutenzione: checklist controlli configurabile (`/api/maintenance/types` CRUD), overview per veicolo con stato/next_due, spunta controllo (`/api/maintenance/checks`, permesso `manage_maintenance`), interventi to-do con completamento+costo, statistiche e report PDF/Excel per periodo. Controlli scaduti/imminenti confluiscono nel campanello notifiche (type 'manutenzione').
+- Nuovo permesso RBAC `manage_maintenance`. Nuove pagine /strategia (ampliata) e /manutenzione.
+- Testato: backend 17/17 pytest (test_iteration8.py) + tutti i flussi frontend e2e OK.
+
 ## Implementato (2026-09-22)
 - Auth JWT email/password, seeding admin.
 - CRUD veicoli (targa, marca/modello, immatricolazione, bollo, ultimo collaudo).
