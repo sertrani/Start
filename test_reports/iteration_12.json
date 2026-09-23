@@ -1,0 +1,29 @@
+{
+  "summary": "Iteration 12 backend + frontend testing for FleetCare's large batch (bug fix + new features). Backend: 10/10 pytest tests PASS covering undo suspend/reactivate (bug fix), rata paid/unpaid, suspend planned_reactivation, reactivate deadline shift, suspension-pdf, /policy/auto-reactivate/run, /dashboard/timeline, maintenance interval_km, view_bollo permission scoping, and vehicle type weight persistence. Frontend: verified via Playwright that Timeline4Weeks section renders on Dashboard, fleet-tipo-select and monitor-tipo-select filters present, PolicyDialog contains all required testids (policy-recalc-dates, policy-rata-status, rata-paid/unpaid buttons toggling correctly, suspend-button, planned-reactivation-input, suspension-pdf-button, reactivate-shift-box), Settings has suspension-letter-text and vtype-new-weight, and manage-policy-button opens PolicyDialog. Rata badge color logic verified visually: 'Pagata' green when paid, 'Da pagare' amber when unpaid, 'Scaduto' red (never 'Regolare' green for unpaid rata).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration12.py",
+    "/app/test_reports/pytest/iter12.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "backend/server.py is now 2617 lines — well over the 700-line guideline. Consider splitting into modules (auth, vehicles, policies, maintenance, reports, strategy, cron).",
+    "VehicleCard edit/duplicate testids are suffixed with the targa (edit-vehicle-button-<tid>) rather than plain 'edit-vehicle-button' as described in the review spec. Not a blocker but tests written against the doc-style testids would fail. Consider aliasing or updating the review doc.",
+    "In auto-reactivate (server.py:2412), when planned_reactivation < current_suspension_start it silently clamps end=today; consider surfacing this rather than silently overriding the requested date."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration12.py (new)"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% of testids verified for the requested features"},
+  "test_credentials": "sertrani@gmail.com / fleet2026 (confirmed working). Regular test user 'testuser_<hex>@example.com' / TestPass123! created & deleted within test_view_bollo_permission_scoping.",
+  "seed_data_creation": "Created and deleted an ephemeral test vehicle (targa TS<hex>) with an annuale/semestrale policy in each test_iteration12 run. Also creates/deletes a temporary maintenance type ('TEST Tagliando <hex>' with interval_km=15000). No lingering data.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "test_iteration12.py loads REACT_APP_BACKEND_URL from /app/frontend/.env if the env var isn't exported. It uses tipologia='annuale' (POLICY_TYPES = annuale/quadrimestrale/trimestrale/mensile/a_data_fissa). Vehicle creation does NOT accept a nested policy — attach the policy via PUT /api/vehicles/{id}/policy. Maintenance types are managed via POST/PUT/DELETE /api/maintenance/types (not the settings blob). rata_state is inside view['policy']['rata_state'], not top-level view.",
+  "rca of the issue": "n/a - all features verified working. The critical undo-suspension bug is fixed (deepcopy snapshot in suspend/reactivate correctly stores the pre-op policy so undoing sets policy.status back to 'active' or 'suspended' respectively)."
+}

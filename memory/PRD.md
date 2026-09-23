@@ -17,6 +17,20 @@ Titolare/operatore autonoleggio (single admin: sertrani@gmail.com).
 - Sospensione: giorni cumulativi tra sospensioni/riattivazioni multiple; max 10 mesi = 304 giorni; auto-riattivazione al raggiungimento del limite e blocco di ulteriori sospensioni.
 - Circolabilità: bloccata SOLO da collaudo scaduto O polizza scaduta/sospesa. Bollo scaduto NON blocca (solo avviso).
 
+## Implementato (2026-06, iterazione 12)
+- BUGFIX: annullando una sospensione/riattivazione dallo Storico la polizza ora torna correttamente allo stato precedente (causa: snapshot di ripristino condivideva il dict `policy` poi mutato in place → risolto con deepcopy in suspend/reactivate/apply_plan).
+- Rata intermedia con tracciamento pagamento: campo `rata_pagata`/`rata_pagata_at`, endpoint `POST /vehicles/{id}/policy/rata-paid`, pulsante "Segna pagata/non pagata". Stato rata: `paid` (verde) / `unpaid` (ambra "Da pagare") / `expired` (rosso) / `none` — mai più verde "regolare" se non pagata.
+- Proposta automatica date polizza: da `data_stipula` propone scadenza contratto (+12m) e rata semestrale (+6m); pulsante "Ricalcola scadenze".
+- Sospensione: proposta data riattivazione = data massima periodo residuo; `planned_reactivation` salvato. Riattivazione: propone slittamento scadenze (contratto/rata) dei giorni effettivamente recuperati (`new_scadenza_contratto`/`new_scadenza_rata`).
+- Auto-riattivazione: cron giornaliero `auto-riattivazione` (08:00) + `POST /cron/auto-reactivate` + `POST /policy/auto-reactivate/run`. Riattiva da solo alla `planned_reactivation`, registra l'operazione, slitta le scadenze; email di promemoria `reactivation_reminder_days` (default 7) gg prima e email di avvenuta riattivazione.
+- Modulo PDF sospensione: `GET /vehicles/{id}/policy/suspension-pdf` con dati veicolo/polizza/date + testo libero personalizzabile in Impostazioni (`suspension_letter_text`).
+- Soglia Km Tagliando: `maint_types.interval_km` opzionale; overview espone km_state/km_left; controlli km scaduti confluiscono in campanello/digest (helper `control_status`/`maintenance_events`).
+- Cruscotto unico "Prossime 4 settimane" (`GET /dashboard/timeline`) su Dashboard con 4 gruppi (scadute/7/14/28gg) unendo bollo/collaudo/polizza/rata/controlli.
+- Filtro per tipologia veicolo in Dashboard e Monitor. Peso sospensione per tipologia modificabile in Impostazioni (0-1).
+- Nuovo permesso RBAC `view_bollo`: se non assegnato, il bollo non compare nelle scadenze di Dashboard/Monitor (card, tabella flotta, monitor, filtro, timeline). Admin lo vede sempre.
+- UI: comandi Modifica/Duplica spostati vicino alla targa (card header e cella targa in tabella); righe/celle cliccabili aprono i relativi dialog.
+- Testato: backend 10/10 pytest (iteration_12) + flussi frontend e2e OK (100%).
+
 ## Implementato (2026-09-23, iterazione 10)
 - Chilometraggio veicolo aggiornato anche al completamento intervento; logica monotòna (tiene il km più alto).
 - Controlli di manutenzione in scadenza inclusi nel promemoria email (giorni configurabili `notification_days.manutenzione`, default 15) e nel campanello in-app.
