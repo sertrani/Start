@@ -1,0 +1,16 @@
+{
+  "summary": "Retest of Strategia simulator dynamic per-type inputs (frontend only). All targeted checks PASS: dynamic testids (sim-need-Auto/Scooter/Altro) present, no legacy testids, GET /api/strategy called with needs=<json> query param, sim-total-saving updates, surplus suggestions render, no controlled/uncontrolled input warnings.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "100%"},
+  "test_credentials": "sertrani@gmail.com / fleet2026 (note: request stated 'fleet2026.' with trailing dot which fails; correct password per /app/memory/test_credentials.md is 'fleet2026' without dot)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Strategia simulator now uses dynamic per-type testids sim-need-<TypeName> matching vehicle_types from GET /api/vehicle-types. Verified request goes to /api/strategy?needs=%7B%22Auto%22:1%7D. sim-total-saving showed 'Risparmio potenziale ~218,63 €' with 2 mezzi suggested. No React console warnings.",
+  "rca of the issue": "n/a - retest passed"
+}

@@ -17,6 +17,14 @@ Titolare/operatore autonoleggio (single admin: sertrani@gmail.com).
 - Sospensione: giorni cumulativi tra sospensioni/riattivazioni multiple; max 10 mesi = 304 giorni; auto-riattivazione al raggiungimento del limite e blocco di ulteriori sospensioni.
 - Circolabilità: bloccata SOLO da collaudo scaduto O polizza scaduta/sospesa. Bollo scaduto NON blocca (solo avviso).
 
+## Implementato (2026-09-23, iterazione 10)
+- Chilometraggio veicolo aggiornato anche al completamento intervento; logica monotòna (tiene il km più alto).
+- Controlli di manutenzione in scadenza inclusi nel promemoria email (giorni configurabili `notification_days.manutenzione`, default 15) e nel campanello in-app.
+- Allegati (foto/fattura PDF/JPG/PNG/WEBP) per ogni intervento: upload e visualizzazione.
+- Grafico andamento km per veicolo (recharts) nella scheda controlli.
+- Tipologie veicolo configurabili in Impostazioni (default Auto/Scooter/Altro), modificabili in qualsiasi momento; `tipo` del veicolo salva il nome della tipologia. Simulatore/target strategia dinamici per tipo (`/api/strategy?needs=<json>`, `strategy_targets` dict). Peso sospensione per tipo (Auto 0.7).
+- Testato: flussi frontend e2e (iteration_10 + retest iteration_11 100%), backend verificato via curl.
+
 ## Implementato (2026-09-23, iterazione 9)
 - Scheda controlli del veicolo (aperta dalla tab Controlli): ogni controllo ha pulsanti OK (verde) / KO (rosso).
 - Esito KO → apre automaticamente la scheda intervento precompilata (veicolo bloccato + descrizione "Controllo X: esito KO — intervento da effettuare"). KO fa comunque ripartire il conteggio dalla data.
