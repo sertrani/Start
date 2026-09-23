@@ -339,6 +339,8 @@ class MaintCheckInput(BaseModel):
     vehicle_id: str
     type_id: str
     checked_at: str
+    outcome: str = "ok"
+    km: Optional[int] = Field(None, ge=0, le=9999999)
     note: Optional[str] = Field(None, max_length=500)
 
 class InterventionInput(BaseModel):
@@ -349,6 +351,7 @@ class InterventionInput(BaseModel):
 class InterventionCompleteInput(BaseModel):
     done_at: str
     costo: float = 0.0
+    km: Optional[int] = Field(None, ge=0, le=9999999)
     note: Optional[str] = Field(None, max_length=1000)
 
 class PlanInput(BaseModel):
@@ -1881,7 +1884,8 @@ async def maintenance_overview(user: dict = Depends(get_current_user)):
                 controls.append({"type_id": t["id"], "type_name": t["name"], "interval_days": t["interval_days"],
                                  "last_check": None, "next_due": None, "state": "never", "days_left": None})
         out.append({"vehicle_id": v["id"], "targa": v["targa"], "marca_modello": v.get("marca_modello"),
-                    "tipo": v.get("tipo") or "auto", "controls": controls, "open_interventions": open_int.get(v["id"], 0)})
+                    "tipo": v.get("tipo") or "auto", "last_km": v.get("last_km"),
+                    "controls": controls, "open_interventions": open_int.get(v["id"], 0)})
     return {"types": [{"id": t["id"], "name": t["name"], "interval_days": t["interval_days"]} for t in types], "vehicles": out}
 
 @api_router.post("/maintenance/checks")
@@ -1890,12 +1894,18 @@ async def add_maint_check(input: MaintCheckInput, user: dict = Depends(require("
     if not t:
         raise HTTPException(status_code=404, detail="Controllo non trovato")
     v = await get_vehicle_or_404(input.vehicle_id)
+    outcome = input.outcome if input.outcome in ("ok", "ko") else "ok"
     doc = {"id": str(uuid.uuid4()), "vehicle_id": input.vehicle_id, "type_id": input.type_id,
-           "type_name": t["name"], "checked_at": input.checked_at[:10], "note": input.note,
+           "type_name": t["name"], "checked_at": input.checked_at[:10], "outcome": outcome,
+           "km": input.km, "note": input.note,
            "user_email": user["email"], "user_name": user.get("name"), "created_at": now_iso()}
     await db.maint_checks.insert_one(dict(doc)); doc.pop("_id", None)
+    if input.km is not None:
+        await db.vehicles.update_one({"id": input.vehicle_id}, {"$set": {"last_km": int(input.km)}})
+    esito = "OK" if outcome == "ok" else "KO"
+    km_txt = f" · {input.km} km" if input.km is not None else ""
     await log_op(user, "maint_check", "Controllo effettuato", v,
-                 f"Controllo '{t['name']}' effettuato il {doc['checked_at']}", None, effective_date=doc["checked_at"])
+                 f"Controllo '{t['name']}' — esito {esito} il {doc['checked_at']}{km_txt}", None, effective_date=doc["checked_at"])
     return doc
 
 @api_router.get("/maintenance/checks")
@@ -1940,13 +1950,18 @@ async def complete_intervention(iid: str, input: InterventionCompleteInput, user
     it = await db.maint_interventions.find_one({"id": iid})
     if not it:
         raise HTTPException(status_code=404, detail="Intervento non trovato")
-    await db.maint_interventions.update_one({"id": iid}, {"$set": {
-        "status": "done", "done_at": input.done_at[:10], "costo": float(input.costo),
-        "done_by": user["email"], "done_note": input.note}})
+    set_doc = {"status": "done", "done_at": input.done_at[:10], "costo": float(input.costo),
+               "done_by": user["email"], "done_note": input.note}
+    if input.km is not None:
+        set_doc["km"] = int(input.km)
+    await db.maint_interventions.update_one({"id": iid}, {"$set": set_doc})
     v = await db.vehicles.find_one({"id": it["vehicle_id"]})
+    if input.km is not None:
+        await db.vehicles.update_one({"id": it["vehicle_id"]}, {"$set": {"last_km": int(input.km)}})
+    km_txt = f" · {input.km} km" if input.km is not None else ""
     await log_op(user, "intervention_done", "Intervento effettuato",
                  {"id": it["vehicle_id"], "targa": (v or {}).get("targa"), "marca_modello": (v or {}).get("marca_modello")},
-                 f"Intervento completato: {it['descrizione']} · € {float(input.costo):.2f}", None, effective_date=input.done_at[:10])
+                 f"Intervento completato: {it['descrizione']} · € {float(input.costo):.2f}{km_txt}", None, effective_date=input.done_at[:10])
     return {"ok": True}
 
 @api_router.delete("/maintenance/interventions/{iid}")
@@ -2044,6 +2059,88 @@ async def maintenance_pdf(date_from: Optional[str] = Query(None), date_to: Optio
     els.append(t)
     doc.build(els); buf.seek(0)
     fname = f"manutenzione_{datetime.now().strftime('%Y%m%d')}.pdf"
+    return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={fname}"})
+
+async def fetch_checks(vehicle_id=None, date_from=None, date_to=None):
+    q = {}
+    if vehicle_id:
+        q["vehicle_id"] = vehicle_id
+    if date_from or date_to:
+        rng = {}
+        if date_from:
+            rng["$gte"] = date_from[:10]
+        if date_to:
+            rng["$lte"] = date_to[:10]
+        q["checked_at"] = rng
+    checks = await db.maint_checks.find(q).sort("checked_at", -1).to_list(20000)
+    vids = {v["id"]: v for v in await db.vehicles.find().to_list(2000)}
+    out = []
+    for c in checks:
+        c.pop("_id", None)
+        v = vids.get(c["vehicle_id"]) or {}
+        c["targa"] = v.get("targa") or "?"
+        c["marca_modello"] = v.get("marca_modello")
+        out.append(c)
+    return out
+
+@api_router.get("/reports/maintenance/checks/excel")
+async def maint_checks_excel(vehicle_id: Optional[str] = Query(None), date_from: Optional[str] = Query(None),
+                             date_to: Optional[str] = Query(None), user: dict = Depends(require("export_reports"))):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    settings = await get_settings()
+    rows = await fetch_checks(vehicle_id, date_from, date_to)
+    wb = Workbook(); ws = wb.active; ws.title = "Controlli"
+    ws["A1"] = settings.get("company_name", "FleetCare Autonoleggio"); ws["A1"].font = Font(bold=True, size=14)
+    ws["A2"] = "Storico controlli periodici"
+    headers = ["Data", "Targa", "Veicolo", "Controllo", "Esito", "Km", "Operatore", "Note"]
+    for ci, h in enumerate(headers, 1):
+        c = ws.cell(row=4, column=ci, value=h); c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
+    for ri, r in enumerate(rows, 5):
+        vals = [r.get("checked_at", ""), r.get("targa", ""), r.get("marca_modello") or "", r.get("type_name", ""),
+                ("OK" if r.get("outcome", "ok") == "ok" else "KO"), (r.get("km") if r.get("km") is not None else "-"),
+                r.get("user_name") or r.get("user_email", ""), r.get("note") or ""]
+        for ci, val in enumerate(vals, 1):
+            ws.cell(row=ri, column=ci, value=val)
+    for i, w in enumerate([12, 12, 20, 24, 8, 10, 22, 40], 1):
+        ws.column_dimensions[chr(64 + i)].width = w
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    fname = f"controlli_{datetime.now().strftime('%Y%m%d')}.xlsx"
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": f"attachment; filename={fname}"})
+
+@api_router.get("/reports/maintenance/checks/pdf")
+async def maint_checks_pdf(vehicle_id: Optional[str] = Query(None), date_from: Optional[str] = Query(None),
+                           date_to: Optional[str] = Query(None), user: dict = Depends(require("export_reports"))):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
+    settings = await get_settings()
+    rows = await fetch_checks(vehicle_id, date_from, date_to)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), topMargin=1*cm, bottomMargin=1*cm, leftMargin=1*cm, rightMargin=1*cm)
+    styles = getSampleStyleSheet(); small = styles["Normal"]; small.fontSize = 7
+    els = [Paragraph(settings.get("company_name", "FleetCare Autonoleggio"), styles["Title"]),
+           Paragraph("Storico controlli periodici", styles["Heading2"]),
+           Paragraph(f"Generato il {datetime.now().strftime('%d/%m/%Y %H:%M')} · {len(rows)} controlli", styles["Normal"]),
+           Spacer(1, 0.4*cm)]
+    cols = ["Data", "Targa", "Controllo", "Esito", "Km", "Operatore", "Note"]
+    data = [cols]
+    for r in rows:
+        data.append([r.get("checked_at", ""), r.get("targa", ""), r.get("type_name", ""),
+                     ("OK" if r.get("outcome", "ok") == "ok" else "KO"),
+                     (str(r.get("km")) if r.get("km") is not None else "-"),
+                     r.get("user_name") or r.get("user_email", ""), Paragraph(escape(r.get("note") or ""), small)])
+    t = Table(data, repeatRows=1, colWidths=[2.2*cm, 2*cm, 5*cm, 1.5*cm, 2*cm, 4*cm, 10*cm])
+    t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                           ("FONTSIZE", (0, 0), (-1, -1), 7), ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CBD5E1")),
+                           ("VALIGN", (0, 0), (-1, -1), "TOP"), ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")])]))
+    els.append(t)
+    doc.build(els); buf.seek(0)
+    fname = f"controlli_{datetime.now().strftime('%Y%m%d')}.pdf"
     return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={fname}"})
 
 # ================= Avviso Strategia (email) =================
