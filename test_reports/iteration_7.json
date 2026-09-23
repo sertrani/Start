@@ -1,0 +1,23 @@
+{
+  "summary": "Iteration 7 FleetCare: strategy advisor, season config, policy tipologia restructure (no semestrale + frazionamento for annuale), vehicle 'tipo', table view, duplicate. Backend pytest 11/11 pass (test_iteration7.py). Frontend Playwright: all critical flows OK — fleet-sort-select default 'Scadenza più vicina', view toggle grid/table, fleet-table with per-row action buttons (policy/duplicate/edit/delete), Duplica veicolo dialog prefills marca/modello/tipo and empties targa+immatricolazione, nav-strategia loads Strategia page with strategy-season-banner ('Stagione di spalla' — season 4→10 default) and strategy-list (5 items), Settings has season-start-select+season-end-select, PolicyDialog shows policy-frazionamento-select only when tipologia=Annuale (hidden for Trimestrale). Strategy opportunity button correctly hidden (opportunities=0). Legacy XY999ZZ policy migrated to tipologia='annuale' + frazionamento='semestrale' (verified via API). Policy PUT with tipologia='semestrale' correctly rejected 400. Suspension via strategy suggested_from works and vehicle.policy.status becomes 'suspended'; reactivate works.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration7.py",
+    "/app/test_reports/pytest/iteration7.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 1594 lines — long-standing recommendation to split (strategy/season logic could move to its own module).",
+    "Deprecated @app.on_event startup/shutdown still used (FastAPI ≥0.109 recommends lifespan handler).",
+    "strategy() recomputes over all vehicles each call (fine for small fleets; consider caching if fleet grows).",
+    "PolicyDialog stores frazionamento default 'unica' but sends null when tipologia!='annuale' — clean; ensure UI reflects saved value on re-open when tipologia switches back to annuale (currently resets to 'unica' if p.frazionamento was null — OK)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration7.py"],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% of tested flows"},
+  "test_credentials": "Admin sertrani@gmail.com / fleet2026 (from /app/memory/test_credentials.md).",
+  "seed_data_creation": "None persisted. Temp vehicles TEST_IT7A..G created and deleted. Season temporarily changed 5/9 then restored to 4/10.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 7 testids verified: fleet-sort-select, fleet-view-grid, fleet-view-table, fleet-table, fleet-row-<id8>, table-policy-button-<id8>, table-duplicate-button-<id8>, table-edit-button-<id8>, table-delete-button-<id8>, table-collaudo-button-<id8>, table-bollo-button-<id8>, table-documents-button-<id8>, table-history-button-<id8>, table-circulation-<id8>, vehicle-tipo-select, policy-frazionamento-select (conditional on Annuale), policy-frazionamento-wrap, nav-strategia, strategy-season-banner, strategy-list, strategy-item-<id8>, strategy-level-<id8>, strategy-suspend-button-<id8>, strategy-confirm-dialog, strategy-confirm-suspend-button, strategy-opportunity-button (only when opportunities>0), season-start-select, season-end-select. Card duplicate button is duplicate-vehicle-button-<id8> (VehicleCard); table version is table-duplicate-button-<id8>. Grid card policy button is manage-policy-button-<id8>. Radix Select needs ~400ms after opening before clicking an option. Current app date ~23 Sept 2026 → default season 4-10 → phase='shoulder' (verified banner text 'Stagione di spalla')."
+}

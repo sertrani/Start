@@ -69,6 +69,16 @@ Titolare/operatore autonoleggio (single admin: sertrani@gmail.com).
 - Note libere per veicolo (max 2000 caratteri), visibili sulla card e nella scheda PDF del veicolo.
 - Testato: backend 11/11 nuovi test (94/96 totali; 2 fallimenti solo per race su impostazione condivisa in parallelo, non bug di prodotto).
 
+## Implementato (2026-09-23, iterazione 7)
+- Ordina Flotta: menu "Ordina per" (scadenza più vicina [default], targa, modello, stato circolazione) valido per griglia e tabella.
+- Duplica Veicolo: pulsante "Duplica" (card e tabella) che apre il form precompilato (marca/modello, tipo) con targa e immatricolazione vuote.
+- Vista Tabella (stile Excel): interruttore griglia/tabella; una riga per veicolo con colonne targa/veicolo/circolazione/collaudo/polizza/bollo e azioni (polizza, collaudo, bollo, doc, storico, duplica, modifica, elimina).
+- Campo "tipo" veicolo (auto/furgone/altro) su veicolo; incluso nello snapshot per l'annullamento.
+- Tipologie polizza ristrutturate: rimossa "semestrale" come tipologia; le polizze Annuali hanno un campo separato "Frazionamento" (unica/semestrale/quadrimestrale/trimestrale/mensile) visibile solo per tipologia=annuale. Comporto 15gg automatico per le annuali, opzionale per le altre. Migrazione all'avvio: vecchie polizze semestrali → annuale + frazionamento semestrale.
+- Stagione operativa configurabile in Impostazioni (mese apertura/chiusura, default apr–ott).
+- Pagina Strategia (nav dedicata) + endpoint GET /api/strategy: per ogni veicolo calcola punteggio/opportunità di sospensione (combinazione pesata risparmio economico + tipo veicolo/domanda stagionale, picco lug–ago), motivazioni testuali, blocchi (comporto 15gg, limite 10 mesi, già sospesa), finestra suggerita e risparmio stimato; sospensione rapida dalla pagina con la data suggerita. Indicatore "opportunità" nella Dashboard che porta alla pagina Strategia.
+- Testato: backend 11/11 pytest (test_iteration7.py) + tutti i flussi frontend e2e OK.
+
 ## Backlog
 - P1: split di server.py in moduli; migrazione a lifespan handler; serializzare i test su bell_days.
 - P2: caching notifications_today; TTL retention audit; restringere CORS a dominio esplicito.
