@@ -50,15 +50,15 @@ export default function Strategia() {
   const [confirm, setConfirm] = useState(null);
   const [busy, setBusy] = useState(false);
   const [until, setUntil] = useState("");
-  const [needs, setNeeds] = useState({ auto: "", furgone: "", altro: "" });
+  const [vtypes, setVtypes] = useState([]);
+  const [needs, setNeeds] = useState({});
 
   const load = useCallback(async () => {
     try {
       const params = {};
       if (until) params.until = until;
-      if (needs.auto !== "") params.need_auto = Number(needs.auto);
-      if (needs.furgone !== "") params.need_furgone = Number(needs.furgone);
-      if (needs.altro !== "") params.need_altro = Number(needs.altro);
+      const cleaned = Object.fromEntries(Object.entries(needs).filter(([, v]) => v !== "" && v != null).map(([k, v]) => [k, Number(v)]));
+      if (Object.keys(cleaned).length) params.needs = JSON.stringify(cleaned);
       const [s, p] = await Promise.all([api.get("/strategy", { params }), api.get("/strategy/plan")]);
       setData(s.data);
       setPlans(p.data);
@@ -71,6 +71,7 @@ export default function Strategia() {
 
   useEffect(() => {
     load();
+    api.get("/vehicle-types").then((r) => setVtypes(r.data)).catch(() => {});
   }, []); // eslint-disable-line
 
   const simulate = () => load();
@@ -169,18 +170,12 @@ export default function Strategia() {
             <Label className="text-xs text-slate-500">Sospendi fino al</Label>
             <Input type="date" value={until} onChange={(e) => setUntil(e.target.value)} data-testid="sim-until-input" />
           </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-slate-500">Auto necessarie</Label>
-            <Input type="number" min="0" value={needs.auto} onChange={(e) => setNeeds({ ...needs, auto: e.target.value })} placeholder="—" data-testid="sim-need-auto" />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-slate-500">Furgoni necessari</Label>
-            <Input type="number" min="0" value={needs.furgone} onChange={(e) => setNeeds({ ...needs, furgone: e.target.value })} placeholder="—" data-testid="sim-need-furgone" />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-slate-500">Altri necessari</Label>
-            <Input type="number" min="0" value={needs.altro} onChange={(e) => setNeeds({ ...needs, altro: e.target.value })} placeholder="—" data-testid="sim-need-altro" />
-          </div>
+          {vtypes.map((t) => (
+            <div className="space-y-1.5" key={t.id}>
+              <Label className="text-xs text-slate-500">{t.name} necessari</Label>
+              <Input type="number" min="0" value={needs[t.name] ?? ""} onChange={(e) => setNeeds({ ...needs, [t.name]: e.target.value })} placeholder="—" data-testid={`sim-need-${t.name}`} />
+            </div>
+          ))}
           <Button onClick={simulate} data-testid="sim-run-button"><TrendingDown className="h-4 w-4 mr-1.5" /> Simula</Button>
         </div>
         {data && (

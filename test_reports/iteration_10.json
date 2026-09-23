@@ -1,0 +1,33 @@
+{
+  "summary": "Frontend E2E tested for Iteration 10. Vehicle Types Manager CRUD, dynamic Tipo dropdown on VehicleFormDialog, dynamic strategy_targets by type name (Auto/Scooter/Altro) persistence, manutenzione reminder days (4th REM row), Manutenzione controls sheet with km chart, OK/KO check flow with km prefill, KO->intervention auto-chain (locked vehicle + prefilled description), intervention attachment upload/view, complete intervention with km field, and monotonic last_km update (85.100 -> 86.000 after intervention complete). Flotta grid + Strategia banner/tabs/plan regression OK. ONE bug: Strategia simulator (Strategia.jsx) has NOT been migrated to dynamic per-type inputs — it still uses hard-coded testids sim-need-auto / sim-need-furgone / sim-need-altro and sends legacy query params need_auto/need_furgone/need_altro to /api/strategy. There is no sim-need-scooter input, so the newly configured Scooter type is not usable in the simulator.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Strategia simulator", "issue": "Simulator inputs are still hard-coded (Auto/Furgone/Altro) rather than generated from /vehicle-types. Missing an input for the 'Scooter' default type. Testids sim-need-auto/sim-need-furgone/sim-need-altro still present (review requested they be dynamic).", "selector": "[data-testid=\"strategy-simulator\"] / sim-need-*", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Strategia simulator -> /api/strategy", "issue": "Frontend still sends legacy params need_auto/need_furgone/need_altro (see Strategia.jsx load()); review states backend expects needs=<json> keyed by type name. Also 'furgone' is no longer a default vehicle type (defaults are Auto/Scooter/Altro), so that input is dead code.", "affected_selectors": ["sim-need-auto", "sim-need-furgone", "sim-need-altro"]}
+    ],
+    "design_issues": [
+      {"screen": "Settings > Strategia section", "issues": ["React console warning: 'A component is changing an uncontrolled input to be controlled' on strategy-target-<Type> inputs — value is undefined when targets[t.name] is missing. Consider defaulting to '' explicitly (targets[t.name] ?? '') is already there but the initial render before settings loads leaves it undefined. Minor."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Refactor Strategia.jsx simulator to generate per-type inputs dynamically from GET /vehicle-types (data-testid=sim-need-<TypeName>), and send params as needs=<JSON string> mapping type name -> number (matching backend /api/strategy?needs=<json>). Remove hard-coded auto/furgone/altro state keys and testids.",
+    "Optionally initialize targets state for each configured type to '' before render to avoid the uncontrolled->controlled React warning."
+  ],
+  "critical_code_review_comments": [
+    "Strategia.jsx (line ~53, 59-61, 167-183): fixed { auto, furgone, altro } state and testids contradicts iteration-10 requirement of dynamic inputs from /vehicle-types. Needs refactor.",
+    "Manutenzione.jsx is now 540 lines — consider splitting VehicleControlsDialog, CheckDialog, AddInterventionDialog, CompleteInterventionDialog, KmChart, StatsTab into separate files. Threshold approaching 700-line limit.",
+    "VehicleTypesManager.jsx: delete has no confirmation and cascade impact on vehicles is not surfaced in UI (vehicles keep the old name string; migration is server-side only). Add a confirm dialog for delete."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "~90% (all iteration-10 features pass except Strategia simulator dynamic inputs)"},
+  "test_credentials": "Admin sertrani@gmail.com / fleet2026 (unchanged)",
+  "seed_data_creation": "AB123CD: added 1 OK check (Olio motore, km 85100), 1 KO check (Olio motore) that auto-created a new intervention, and completed that new intervention (cost 50€, km 86000). Vehicle last_km monotonically updated from 85100 -> 86000. Settings strategy_targets was temporarily set to {Auto:5} then restored to {}. notification_days.manutenzione was changed to 20 (was 15) — main agent should restore to 15 if desired.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Vehicle Types default (Auto/Scooter/Altro) exist. Vehicle tipo migration to type names verified via dropdown. All existing vehicles have tipo 'Auto'. Manutenzione for AB123CD now has richer history + 2 completed interventions and last_km=86000. The only pending issue is Strategia simulator refactor to dynamic per-type inputs. After main agent's fix, retest by (1) reload Strategia page, (2) confirm data-testid=sim-need-Auto/sim-need-Scooter/sim-need-Altro exist and no sim-need-furgone remains, (3) fill sim-need-Auto=1 and press Simula, ensure sim-total-saving updates.",
+  "rca of the issue": "Strategia.jsx was not updated in this iteration to consume /vehicle-types and generate simulator inputs dynamically; state remains hard-coded to { auto, furgone, altro }. Backend endpoint accepts needs=<json> but frontend still calls with legacy need_<type> params."
+}
