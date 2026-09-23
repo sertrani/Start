@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -21,11 +21,14 @@ import { Progress } from "@/components/ui/progress";
 import api, { apiErrorMessage } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { fmtDate, POLICY_LABELS, FRAZIONAMENTO_LABELS } from "@/lib/format";
-import { Loader2, PauseCircle, PlayCircle, AlertTriangle, History, ShieldCheck, RefreshCw } from "lucide-react";
+import { fmtDate, POLICY_LABELS, FRAZIONAMENTO_LABELS, stateBadge } from "@/lib/format";
+import { Loader2, PauseCircle, PlayCircle, AlertTriangle, History, ShieldCheck, RefreshCw, Calculator, FileDown, CheckCircle2, CircleDollarSign } from "lucide-react";
 
 const AUTO_GRACE = ["annuale"];
 const todayStr = () => new Date().toISOString().slice(0, 10);
+const addMonths = (iso, m) => { const d = new Date(iso + "T00:00:00"); d.setMonth(d.getMonth() + m); return d.toISOString().slice(0, 10); };
+const addDays = (iso, n) => { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+const daysBetween = (a, b) => Math.max(0, Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 86400000));
 
 export default function PolicyDialog({ open, onOpenChange, vehicle, onSaved }) {
   const { hasPerm } = useAuth();
@@ -43,11 +46,57 @@ export default function PolicyDialog({ open, onOpenChange, vehicle, onSaved }) {
     frazionamento: p?.frazionamento || "unica",
   });
   const [resetSusp, setResetSusp] = useState(true);
-  const [effDate, setEffDate] = useState(todayStr());
+  const [effDate, setEffDate] = useState(p?.current_suspension_start?.slice(0, 10) || todayStr());
+  const [plannedReact, setPlannedReact] = useState("");
+  const [shiftDeadlines, setShiftDeadlines] = useState(true);
+  const [newContract, setNewContract] = useState("");
+  const [newRata, setNewRata] = useState("");
   const [loading, setLoading] = useState(false);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const autoGrace = AUTO_GRACE.includes(form.tipologia);
   const graceEffective = autoGrace || form.grace_period;
+
+  const days = p?.cumulative_suspension_days ?? 0;
+  const maxDays = p?.max_suspension_days ?? 304;
+  const pct = Math.min(100, (days / maxDays) * 100);
+  const suspended = p?.status === "suspended";
+  const limitReached = p?.suspension_limit_reached;
+  const canManage = hasPerm("manage_policies");
+  const remaining = Math.max(0, maxDays - days);
+
+  // Proposte automatiche di data
+  useEffect(() => {
+    if (!suspended) {
+      setPlannedReact(effDate ? addDays(effDate, remaining) : "");
+    } else if (p?.current_suspension_start && effDate) {
+      const rec = daysBetween(p.current_suspension_start.slice(0, 10), effDate);
+      setNewContract(p?.scadenza_contratto ? addDays(p.scadenza_contratto.slice(0, 10), rec) : "");
+      setNewRata(p?.scadenza_rata_intermedia ? addDays(p.scadenza_rata_intermedia.slice(0, 10), rec) : "");
+    }
+    // eslint-disable-next-line
+  }, [effDate, suspended]);
+
+  const onStipulaChange = (e) => {
+    const val = e.target.value;
+    setForm((f) => {
+      const next = { ...f, data_stipula: val };
+      if (val && f.tipologia === "annuale") {
+        if (!f.scadenza_contratto) next.scadenza_contratto = addMonths(val, 12);
+        if (f.frazionamento === "semestrale" && !f.scadenza_rata_intermedia) next.scadenza_rata_intermedia = addMonths(val, 6);
+      }
+      return next;
+    });
+  };
+
+  const recalcDates = () => {
+    if (!form.data_stipula) return toast.error("Inserisci prima la data di stipula");
+    setForm((f) => ({
+      ...f,
+      scadenza_contratto: addMonths(f.data_stipula, 12),
+      scadenza_rata_intermedia: f.frazionamento === "semestrale" ? addMonths(f.data_stipula, 6) : f.scadenza_rata_intermedia,
+    }));
+    toast.success("Date ricalcolate dalla data di stipula");
+  };
 
   const payload = () => ({
     compagnia: form.compagnia,
@@ -89,11 +138,11 @@ export default function PolicyDialog({ open, onOpenChange, vehicle, onSaved }) {
     }
   };
 
-  const toggle = async (action) => {
+  const suspend = async () => {
     setLoading(true);
     try {
-      await api.post(`/vehicles/${vehicle.id}/policy/${action}`, { effective_date: effDate });
-      toast.success(action === "suspend" ? "Copertura sospesa" : "Copertura riattivata");
+      await api.post(`/vehicles/${vehicle.id}/policy/suspend`, { effective_date: effDate, planned_reactivation: plannedReact || null });
+      toast.success("Copertura sospesa");
       onSaved();
     } catch (err) {
       toast.error(apiErrorMessage(err));
@@ -102,12 +151,49 @@ export default function PolicyDialog({ open, onOpenChange, vehicle, onSaved }) {
     }
   };
 
-  const days = p?.cumulative_suspension_days ?? 0;
-  const maxDays = p?.max_suspension_days ?? 304;
-  const pct = Math.min(100, (days / maxDays) * 100);
-  const suspended = p?.status === "suspended";
-  const limitReached = p?.suspension_limit_reached;
-  const canManage = hasPerm("manage_policies");
+  const reactivate = async () => {
+    setLoading(true);
+    try {
+      await api.post(`/vehicles/${vehicle.id}/policy/reactivate`, {
+        effective_date: effDate,
+        new_scadenza_contratto: shiftDeadlines ? (newContract || null) : null,
+        new_scadenza_rata: shiftDeadlines ? (newRata || null) : null,
+      });
+      toast.success("Copertura riattivata");
+      onSaved();
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const markRata = async (paid) => {
+    setLoading(true);
+    try {
+      await api.post(`/vehicles/${vehicle.id}/policy/rata-paid`, { paid });
+      toast.success(paid ? "Rata segnata come pagata" : "Rata segnata come non pagata");
+      onSaved();
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const downloadSuspensionPdf = async () => {
+    try {
+      const res = await api.get(`/vehicles/${vehicle.id}/policy/suspension-pdf`, { responseType: "blob" });
+      const url = window.URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url; a.download = `sospensione_${vehicle.targa}.pdf`; a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    }
+  };
+
+  const rataBadge = p ? stateBadge(p.rata_state) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -144,7 +230,7 @@ export default function PolicyDialog({ open, onOpenChange, vehicle, onSaved }) {
             </div>
             <div className="space-y-1.5">
               <Label>Data stipula</Label>
-              <Input type="date" value={form.data_stipula} onChange={set("data_stipula")} required data-testid="policy-start-input" />
+              <Input type="date" value={form.data_stipula} onChange={onStipulaChange} required data-testid="policy-start-input" />
             </div>
           </div>
           {form.tipologia === "annuale" && (
@@ -171,6 +257,9 @@ export default function PolicyDialog({ open, onOpenChange, vehicle, onSaved }) {
               <Input type="date" value={form.scadenza_contratto} onChange={set("scadenza_contratto")} required data-testid="policy-contract-input" />
             </div>
           </div>
+          <button type="button" onClick={recalcDates} className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700" data-testid="policy-recalc-dates">
+            <Calculator className="h-3.5 w-3.5" /> Ricalcola scadenze dalla data di stipula
+          </button>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Premio totale (€)</Label>
@@ -200,6 +289,30 @@ export default function PolicyDialog({ open, onOpenChange, vehicle, onSaved }) {
             </div>
           )}
         </form>
+
+        {p && p.scadenza_rata_intermedia && (
+          <div className="rounded-xl border border-slate-200 bg-white p-3 flex items-center justify-between gap-2" data-testid="policy-rata-status">
+            <div className="flex items-center gap-2 min-w-0">
+              <CircleDollarSign className="h-4 w-4 text-slate-400 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-800">Rata intermedia · {fmtDate(p.scadenza_rata_intermedia)}</p>
+                <p className="text-xs text-slate-500">{p.rata_pagata_at ? `Pagata il ${fmtDate(p.rata_pagata_at)}` : "Non ancora pagata"}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${rataBadge.cls}`}>{rataBadge.label}</span>
+              {canManage && (
+                p.rata_pagata ? (
+                  <Button size="sm" variant="outline" disabled={loading} onClick={() => markRata(false)} data-testid="rata-unpaid-button">Segna non pagata</Button>
+                ) : (
+                  <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" disabled={loading} onClick={() => markRata(true)} data-testid="rata-paid-button">
+                    <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Segna pagata
+                  </Button>
+                )
+              )}
+            </div>
+          </div>
+        )}
 
         {p && canManage && (
           <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 space-y-2">
@@ -237,6 +350,12 @@ export default function PolicyDialog({ open, onOpenChange, vehicle, onSaved }) {
               </span>
             </div>
 
+            {suspended && p.planned_reactivation && (
+              <div className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-md p-2" data-testid="planned-reactivation-info">
+                Riattivazione automatica programmata per il {fmtDate(p.planned_reactivation)}: il sistema riattiverà il veicolo da solo.
+              </div>
+            )}
+
             {limitReached && (
               <div className="flex items-start gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md p-2" data-testid="suspension-limit-warning">
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
@@ -251,12 +370,46 @@ export default function PolicyDialog({ open, onOpenChange, vehicle, onSaved }) {
                   <Input type="date" value={effDate} onChange={(e) => setEffDate(e.target.value)} data-testid="suspension-effective-date-input" />
                 </div>
                 {suspended ? (
-                  <Button onClick={() => toggle("reactivate")} disabled={loading} className="w-full bg-emerald-600 hover:bg-emerald-700" data-testid="reactivate-button">
-                    <PlayCircle className="h-4 w-4 mr-2" /> Riattiva copertura
-                  </Button>
+                  <>
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 space-y-2" data-testid="reactivate-shift-box">
+                      <label className="flex items-center gap-2 text-xs font-medium text-emerald-800">
+                        <Checkbox checked={shiftDeadlines} onCheckedChange={(c) => setShiftDeadlines(!!c)} data-testid="reactivate-shift-checkbox" />
+                        Slitta le scadenze dei giorni recuperati
+                      </label>
+                      {shiftDeadlines && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-emerald-700">Nuova scad. contratto</Label>
+                            <Input type="date" value={newContract} onChange={(e) => setNewContract(e.target.value)} data-testid="reactivate-new-contract" />
+                          </div>
+                          {p.scadenza_rata_intermedia && (
+                            <div className="space-y-1">
+                              <Label className="text-[11px] text-emerald-700">Nuova scad. rata</Label>
+                              <Input type="date" value={newRata} onChange={(e) => setNewRata(e.target.value)} data-testid="reactivate-new-rata" />
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <Button onClick={reactivate} disabled={loading} className="w-full bg-emerald-600 hover:bg-emerald-700" data-testid="reactivate-button">
+                      <PlayCircle className="h-4 w-4 mr-2" /> Riattiva copertura
+                    </Button>
+                  </>
                 ) : (
-                  <Button onClick={() => toggle("suspend")} disabled={loading} variant="outline" className="w-full border-blue-300 text-blue-700 hover:bg-blue-50" data-testid="suspend-button">
-                    <PauseCircle className="h-4 w-4 mr-2" /> Sospendi copertura
+                  <>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Data prevista riattivazione (auto)</Label>
+                      <Input type="date" value={plannedReact} onChange={(e) => setPlannedReact(e.target.value)} data-testid="planned-reactivation-input" />
+                      <p className="text-[11px] text-slate-400">Proposta: data massima del periodo residuo ({remaining} gg). Il veicolo si riattiverà da solo a questa data.</p>
+                    </div>
+                    <Button onClick={suspend} disabled={loading} variant="outline" className="w-full border-blue-300 text-blue-700 hover:bg-blue-50" data-testid="suspend-button">
+                      <PauseCircle className="h-4 w-4 mr-2" /> Sospendi copertura
+                    </Button>
+                  </>
+                )}
+                {hasPerm("export_reports") && (
+                  <Button type="button" variant="ghost" onClick={downloadSuspensionPdf} className="w-full text-slate-600" data-testid="suspension-pdf-button">
+                    <FileDown className="h-4 w-4 mr-2" /> Modulo sospensione (PDF)
                   </Button>
                 )}
               </div>

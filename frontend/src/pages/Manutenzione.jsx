@@ -157,8 +157,8 @@ function VehicleControlsDialog({ vehicle, canMaint, hasPerm, onOpenChange, onSav
             return (
               <div key={c.type_id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2" data-testid={`ctrl-row-${c.type_id.slice(0, 6)}`}>
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-slate-800">{c.type_name} <span className="text-xs text-slate-400">· ogni {c.interval_days}gg</span></p>
-                  <p className="text-xs text-slate-500">{c.last_check ? `ultimo ${fmtDate(c.last_check)} · prossimo ${fmtDate(c.next_due)}` : "mai registrato"}</p>
+                  <p className="text-sm font-medium text-slate-800">{c.type_name} <span className="text-xs text-slate-400">· ogni {c.interval_days}gg{c.interval_km ? ` / ${Number(c.interval_km).toLocaleString("it-IT")}km` : ""}</span></p>
+                  <p className="text-xs text-slate-500">{c.last_check ? `ultimo ${fmtDate(c.last_check)} · prossimo ${fmtDate(c.next_due)}` : "mai registrato"}{c.interval_km && c.km_left != null ? ` · ${c.km_left > 0 ? `${Number(c.km_left).toLocaleString("it-IT")} km al prossimo` : "soglia km superata"}` : ""}</p>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${st.cls}`}>{st.label}</span>

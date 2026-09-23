@@ -70,6 +70,10 @@ export function stateBadge(state) {
       return { label: "Scaduto", cls: "bg-red-50 text-red-700 border-red-200" };
     case "suspended":
       return { label: "Sospesa", cls: "bg-blue-50 text-blue-700 border-blue-200" };
+    case "paid":
+      return { label: "Pagata", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" };
+    case "unpaid":
+      return { label: "Da pagare", cls: "bg-amber-50 text-amber-800 border-amber-200" };
     default:
       return { label: "N/D", cls: "bg-slate-100 text-slate-500 border-slate-200" };
   }
@@ -87,6 +91,10 @@ export function stateCell(state) {
       return "bg-red-100 text-red-800 border-red-200";
     case "suspended":
       return "bg-blue-100 text-blue-800 border-blue-200";
+    case "paid":
+      return "bg-emerald-100 text-emerald-800 border-emerald-200";
+    case "unpaid":
+      return "bg-amber-100 text-amber-800 border-amber-200";
     default:
       return "bg-slate-50 text-slate-400 border-slate-200";
   }

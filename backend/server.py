@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict
 from datetime import datetime, timezone, timedelta, date
 import calendar
+import copy
 import uuid
 import io
 import re
@@ -48,7 +49,7 @@ VEHICLE_TYPES = ["auto", "furgone", "altro"]
 DOC_TYPES = ["libretto", "carta_circolazione", "polizza", "altro"]
 
 PERMISSIONS = ["manage_vehicles", "manage_policies", "manage_payments", "manage_maintenance",
-               "delete_operations", "manage_users", "export_reports", "manage_settings"]
+               "delete_operations", "manage_users", "export_reports", "manage_settings", "view_bollo"]
 PERMISSION_LABELS = {
     "manage_vehicles": "Gestione veicoli",
     "manage_policies": "Gestione polizze e sospensioni",
@@ -58,7 +59,15 @@ PERMISSION_LABELS = {
     "manage_users": "Gestione utenti",
     "export_reports": "Esportazione report",
     "manage_settings": "Impostazioni",
+    "view_bollo": "Visualizza bollo (scadenze in Dashboard/Monitor)",
 }
+
+DEFAULT_SUSP_LETTER = (
+    "Con la presente si richiede la sospensione della copertura assicurativa del veicolo "
+    "sotto indicato a decorrere dalla data di richiesta e fino alla data di prevista riattivazione, "
+    "ai sensi delle condizioni di polizza. Si richiede conferma della sospensione e il conseguente "
+    "recupero del periodo di copertura residuo al momento della riattivazione."
+)
 
 def today_iso() -> str:
     return datetime.now(timezone.utc).date().isoformat()
@@ -273,6 +282,7 @@ class Policy(BaseModel):
     importo_rata: Optional[float] = None
     grace_period: Optional[bool] = False
     frazionamento: Optional[str] = None
+    rata_pagata: Optional[bool] = None
 
 class RenewInput(Policy):
     reset_suspensions: bool = False
@@ -299,6 +309,13 @@ class BolloPaymentInput(BaseModel):
 
 class SuspendInput(BaseModel):
     effective_date: Optional[str] = None
+    planned_reactivation: Optional[str] = None
+    new_scadenza_contratto: Optional[str] = None
+    new_scadenza_rata: Optional[str] = None
+
+class RataPaidInput(BaseModel):
+    paid: bool = True
+    date: Optional[str] = None
 
 class NotificationDays(BaseModel):
     bollo: int = 30
@@ -315,6 +332,8 @@ class SettingsInput(BaseModel):
     season_end_month: int = Field(10, ge=1, le=12)
     strategy_alert_month: int = Field(11, ge=1, le=12)
     strategy_targets: dict = {}
+    reactivation_reminder_days: int = Field(7, ge=0, le=60)
+    suspension_letter_text: Optional[str] = None
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -337,6 +356,7 @@ class VehicleTypeInput(BaseModel):
 class MaintTypeInput(BaseModel):
     name: str = Field(..., max_length=120)
     interval_days: int = Field(180, ge=1, le=3650)
+    interval_km: Optional[int] = Field(None, ge=0, le=1000000)
 
 class MaintCheckInput(BaseModel):
     vehicle_id: str
@@ -448,7 +468,16 @@ def build_vehicle_view(v: dict) -> dict:
     today = datetime.now(timezone.utc).date()
     if policy:
         contract = parse_date(policy.get("scadenza_contratto"))
-        rata_state, rata_days = days_status(policy.get("scadenza_rata_intermedia"))
+        rata_raw_state, rata_days = days_status(policy.get("scadenza_rata_intermedia"))
+        rata_paid = bool(policy.get("rata_pagata"))
+        if not policy.get("scadenza_rata_intermedia"):
+            rata_state = "none"
+        elif rata_paid:
+            rata_state = "paid"
+        elif rata_raw_state == "expired":
+            rata_state = "expired"
+        else:
+            rata_state = "unpaid"
         eff_days = effective_suspension_days(policy)
         suspended = policy.get("status") == "suspended"
         limit_reached = policy.get("suspension_limit_reached", False)
@@ -477,9 +506,11 @@ def build_vehicle_view(v: dict) -> dict:
             "grace_period": bool(policy.get("grace_period")), "grace_applies": g_applies,
             "grace_end": grace_end.isoformat() if grace_end else None,
             "status": policy.get("status", "active"), "rata_state": rata_state, "rata_days": rata_days,
+            "rata_pagata": rata_paid, "rata_pagata_at": policy.get("rata_pagata_at"),
             "cumulative_suspension_days": eff_days, "max_suspension_days": MAX_SUSPENSION_DAYS,
             "suspension_limit_reached": limit_reached,
             "current_suspension_start": policy.get("current_suspension_start"),
+            "planned_reactivation": policy.get("planned_reactivation"),
             "suspensions": policy.get("suspensions", []),
             "can_suspend": (not suspended) and (not limit_reached) and eff_days < MAX_SUSPENSION_DAYS,
         }
@@ -524,6 +555,8 @@ async def get_settings() -> dict:
     s.setdefault("season_end_month", 10)
     s.setdefault("strategy_alert_month", 11)
     s.setdefault("strategy_targets", {})
+    s.setdefault("reactivation_reminder_days", 7)
+    s.setdefault("suspension_letter_text", DEFAULT_SUSP_LETTER)
     if "manutenzione" not in s.get("notification_days", {}):
         s.setdefault("notification_days", {})["manutenzione"] = 15
     return s
@@ -751,9 +784,13 @@ def build_policy(input: Policy, base: dict) -> dict:
             "scadenza_contratto": input.scadenza_contratto, "importo_premio": input.importo_premio,
             "importo_rata": input.importo_rata, "grace_period": bool(input.grace_period),
             "frazionamento": (input.frazionamento if input.tipologia == "annuale" else None),
+            "rata_pagata": (bool(base.get("rata_pagata")) if base.get("scadenza_rata_intermedia") == input.scadenza_rata_intermedia else False),
+            "rata_pagata_at": (base.get("rata_pagata_at") if base.get("scadenza_rata_intermedia") == input.scadenza_rata_intermedia else None),
             "status": base.get("status", "active"),
             "cumulative_suspension_days": base.get("cumulative_suspension_days", 0),
             "current_suspension_start": base.get("current_suspension_start"),
+            "planned_reactivation": base.get("planned_reactivation"),
+            "reactivation_reminded": base.get("reactivation_reminded", False),
             "suspensions": base.get("suspensions", []),
             "suspension_limit_reached": base.get("suspension_limit_reached", False)}
 
@@ -802,13 +839,16 @@ async def suspend_policy(vehicle_id: str, input: SuspendInput = SuspendInput(), 
         raise HTTPException(status_code=400, detail="Polizza già sospesa")
     if policy.get("suspension_limit_reached") or policy.get("cumulative_suspension_days", 0) >= MAX_SUSPENSION_DAYS:
         raise HTTPException(status_code=400, detail="Limite massimo di sospensione (10 mesi) raggiunto")
-    prev = snapshot(v, ["policy"])
+    prev_policy = copy.deepcopy(policy)
     eff = input.effective_date or today_iso()
     policy["status"] = "suspended"
     policy["current_suspension_start"] = eff
+    policy["planned_reactivation"] = (input.planned_reactivation[:10] if input.planned_reactivation else None)
+    policy["reactivation_reminded"] = False
     await db.vehicles.update_one({"id": vehicle_id}, {"$set": {"policy": policy}})
+    plan_txt = f" · riattivazione prevista {policy['planned_reactivation']}" if policy["planned_reactivation"] else ""
     await log_op(user, "policy_suspend", "Sospensione copertura", v,
-                 f"Copertura sospesa dal {eff}", {"type": "set", "set": {"policy": prev["policy"]}}, effective_date=eff)
+                 f"Copertura sospesa dal {eff}{plan_txt}", {"type": "set", "set": {"policy": prev_policy}}, effective_date=eff)
     return build_vehicle_view(await db.vehicles.find_one({"id": vehicle_id}))
 
 @api_router.post("/vehicles/{vehicle_id}/policy/reactivate")
@@ -817,7 +857,7 @@ async def reactivate_policy(vehicle_id: str, input: SuspendInput = SuspendInput(
     policy = v.get("policy")
     if not policy or policy.get("status") != "suspended":
         raise HTTPException(status_code=400, detail="La polizza non è sospesa")
-    prev = snapshot(v, ["policy"])
+    prev_policy = copy.deepcopy(policy)
     start = parse_date(policy["current_suspension_start"])
     eff = input.effective_date or today_iso()
     end = parse_date(eff)
@@ -833,13 +873,93 @@ async def reactivate_policy(vehicle_id: str, input: SuspendInput = SuspendInput(
     policy["cumulative_suspension_days"] = new_cumulative
     policy["status"] = "active"
     policy["current_suspension_start"] = None
+    policy["planned_reactivation"] = None
+    policy["reactivation_reminded"] = False
     if new_cumulative >= MAX_SUSPENSION_DAYS:
         policy["suspension_limit_reached"] = True
+    shift_txt = ""
+    if input.new_scadenza_contratto:
+        policy["scadenza_contratto"] = input.new_scadenza_contratto[:10]
+        shift_txt += f" · nuova scad. contratto {policy['scadenza_contratto']}"
+    if input.new_scadenza_rata:
+        policy["scadenza_rata_intermedia"] = input.new_scadenza_rata[:10]
+        shift_txt += f" · nuova scad. rata {policy['scadenza_rata_intermedia']}"
     await db.vehicles.update_one({"id": vehicle_id}, {"$set": {"policy": policy}})
     await log_op(user, "policy_reactivate", "Riattivazione copertura", v,
-                 f"Copertura riattivata dal {eff} · +{used} gg (totale {new_cumulative}/{MAX_SUSPENSION_DAYS})",
-                 {"type": "set", "set": {"policy": prev["policy"]}}, effective_date=eff)
+                 f"Copertura riattivata dal {eff} · +{used} gg (totale {new_cumulative}/{MAX_SUSPENSION_DAYS}){shift_txt}",
+                 {"type": "set", "set": {"policy": prev_policy}}, effective_date=eff)
     return build_vehicle_view(await db.vehicles.find_one({"id": vehicle_id}))
+
+@api_router.post("/vehicles/{vehicle_id}/policy/rata-paid")
+async def set_rata_paid(vehicle_id: str, input: RataPaidInput, user: dict = Depends(require("manage_policies"))):
+    v = await get_vehicle_or_404(vehicle_id)
+    policy = v.get("policy")
+    if not policy:
+        raise HTTPException(status_code=400, detail="Nessuna polizza")
+    if not policy.get("scadenza_rata_intermedia"):
+        raise HTTPException(status_code=400, detail="Nessuna rata intermedia impostata")
+    prev_policy = copy.deepcopy(policy)
+    policy["rata_pagata"] = bool(input.paid)
+    policy["rata_pagata_at"] = ((input.date or today_iso())[:10] if input.paid else None)
+    await db.vehicles.update_one({"id": vehicle_id}, {"$set": {"policy": policy}})
+    msg = "Rata intermedia segnata come pagata" if input.paid else "Rata intermedia segnata come non pagata"
+    await log_op(user, "rata_paid", "Rata polizza", v, msg,
+                 {"type": "set", "set": {"policy": prev_policy}}, effective_date=policy.get("rata_pagata_at") or today_iso())
+    return build_vehicle_view(await db.vehicles.find_one({"id": vehicle_id}))
+
+@api_router.get("/vehicles/{vehicle_id}/policy/suspension-pdf")
+async def suspension_pdf(vehicle_id: str, user: dict = Depends(require("export_reports"))):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+    from reportlab.lib.styles import getSampleStyleSheet
+    v = await get_vehicle_or_404(vehicle_id)
+    view = build_vehicle_view(v)
+    p = view.get("policy")
+    if not p:
+        raise HTTPException(status_code=400, detail="Nessuna polizza per questo veicolo")
+    settings = await get_settings()
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=1.5*cm, bottomMargin=1.5*cm, leftMargin=2*cm, rightMargin=2*cm)
+    styles = getSampleStyleSheet()
+    normal = styles["Normal"]; normal.fontSize = 10; normal.leading = 15
+    elements = []
+    if settings.get("logo_path"):
+        try:
+            content, _ = get_object(settings["logo_path"])
+            if is_valid_image_bytes(content):
+                elements.append(Image(io.BytesIO(content), width=2*cm, height=2*cm))
+        except Exception:
+            pass
+
+    def dt(s):
+        return s[:10] if s else "—"
+
+    req_date = p.get("current_suspension_start") or today_iso()
+    react_date = p.get("planned_reactivation")
+    elements += [Paragraph(settings.get("company_name", "FleetCare Autonoleggio"), styles["Title"]),
+                 Paragraph("Modulo di richiesta sospensione copertura assicurativa", styles["Heading2"]),
+                 Paragraph(f"Data documento: {datetime.now().strftime('%d/%m/%Y')}", normal), Spacer(1, 0.4*cm)]
+    gen = [["Targa", view["targa"], "Marca/Modello", view.get("marca_modello", "")],
+           ["Immatricolazione", dt(view.get("data_immatricolazione")), "Tipo veicolo", view.get("tipo") or "—"],
+           ["Compagnia", p.get("compagnia") or "—", "N. polizza", p.get("numero_polizza") or "—"],
+           ["Scad. contratto", dt(p.get("scadenza_contratto")), "Premio", (f"EUR {p['importo_premio']:.2f}" if p.get("importo_premio") else "—")],
+           ["Data richiesta sospensione", dt(req_date), "Prevista riattivazione", dt(react_date)]]
+    t = Table(gen, colWidths=[4*cm, 4.5*cm, 3.5*cm, 4.5*cm])
+    t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CBD5E1")),
+                           ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F1F5F9")),
+                           ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#F1F5F9")),
+                           ("FONTSIZE", (0, 0), (-1, -1), 9), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    elements += [t, Spacer(1, 0.5*cm)]
+    letter = settings.get("suspension_letter_text") or ""
+    if letter:
+        elements += [Paragraph(escape(letter).replace("\n", "<br/>"), normal), Spacer(1, 1.2*cm)]
+    elements += [Paragraph("Data ______________          Firma __________________________", normal)]
+    doc.build(elements)
+    buf.seek(0)
+    fname = f"sospensione_{view['targa']}_{datetime.now().strftime('%Y%m%d')}.pdf"
+    return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={fname}"})
 
 # ---------------- Documents ----------------
 @api_router.post("/vehicles/{vehicle_id}/documents")
@@ -984,28 +1104,16 @@ async def notifications_today(user: dict = Depends(get_current_user)):
                 upcoming.append(ev)
     for arr in (overdue, due_today, upcoming):
         arr.sort(key=lambda e: e["date"])
-    types = await db.maint_types.find({"active": True}).sort("order", 1).to_list(200)
-    if types:
-        latest = await latest_checks_map()
-        vmap = {v["id"]: v for v in vehicles}
-        for (vid, tid), c in latest.items():
-            t = next((x for x in types if x["id"] == tid), None)
-            v = vmap.get(vid)
-            if not t or not v:
-                continue
-            nd = parse_date(c["checked_at"]) + timedelta(days=t["interval_days"])
-            dl = (nd - today).days
-            ev = {"date": nd.isoformat(), "type": "manutenzione", "label": f"Controllo: {t['name']}",
-                  "state": "expired" if dl < 0 else "upcoming", "targa": v["targa"], "vehicle_id": vid,
-                  "marca_modello": v.get("marca_modello"), "days_left": dl}
-            if dl < 0:
-                overdue.append(ev)
-            elif dl == 0:
-                due_today.append(ev)
-            elif dl <= bell_days:
-                upcoming.append(ev)
-        for arr in (overdue, due_today, upcoming):
-            arr.sort(key=lambda e: e["date"])
+    for ev in await maintenance_events(vehicles, today, bell_days):
+        dl = ev["days_left"]
+        if dl < 0:
+            overdue.append(ev)
+        elif dl == 0:
+            due_today.append(ev)
+        else:
+            upcoming.append(ev)
+    for arr in (overdue, due_today, upcoming):
+        arr.sort(key=lambda e: e["date"])
     return {"overdue": overdue, "today": due_today, "upcoming": upcoming,
             "bell_days": bell_days, "count": len(overdue) + len(due_today)}
 
@@ -1215,6 +1323,28 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
             upcoming += 1
     return {"total": total, "can_circulate": can, "cannot_circulate": cannot,
             "suspended": suspended, "upcoming_30": upcoming}
+
+@api_router.get("/dashboard/timeline")
+async def dashboard_timeline(days: int = Query(28, ge=1, le=120), user: dict = Depends(get_current_user)):
+    vehicles = await db.vehicles.find().to_list(2000)
+    today = datetime.now(timezone.utc).date()
+    events = []
+    for v in vehicles:
+        if v.get("policy"):
+            normalize_policy_suspension(v["policy"])
+        for ev in vehicle_events(build_vehicle_view(v)):
+            if ev.get("state") == "paid":
+                continue
+            d = parse_date(ev["date"])
+            if not d:
+                continue
+            dl = (d - today).days
+            if dl <= days:
+                ev["days_left"] = dl
+                events.append(ev)
+    events += await maintenance_events(vehicles, today, days)
+    events.sort(key=lambda e: (e["date"], e.get("type", "")))
+    return {"days": days, "today": today.isoformat(), "events": events}
 
 # ---------------- Strategia sospensioni ----------------
 PEAK_MONTHS = {7, 8}
@@ -1558,6 +1688,8 @@ async def update_settings(input: SettingsInput, user: dict = Depends(require("ma
         "season_end_month": int(input.season_end_month),
         "strategy_alert_month": int(input.strategy_alert_month),
         "strategy_targets": {str(k): int(v) for k, v in (input.strategy_targets or {}).items()},
+        "reactivation_reminder_days": int(input.reactivation_reminder_days),
+        "suspension_letter_text": ((input.suspension_letter_text or "").strip() or DEFAULT_SUSP_LETTER),
     }}, upsert=True)
     return await get_settings()
 
@@ -1595,21 +1727,7 @@ async def compute_digest():
                 ev["days_left"] = days_left
                 items.append(ev)
     win_m = nd.get("manutenzione", 15)
-    mtypes = await db.maint_types.find({"active": True}).to_list(200)
-    if mtypes:
-        latest = await latest_checks_map()
-        vmap = {x["id"]: x for x in vehicles}
-        for (vid, tid), c in latest.items():
-            t = next((x for x in mtypes if x["id"] == tid), None)
-            vv = vmap.get(vid)
-            if not t or not vv:
-                continue
-            nd_due = parse_date(c["checked_at"]) + timedelta(days=t["interval_days"])
-            ddl = (nd_due - today).days
-            if ddl <= win_m:
-                items.append({"date": nd_due.isoformat(), "type": "manutenzione", "label": f"Controllo: {t['name']}",
-                              "state": "expired" if ddl < 0 else "upcoming", "targa": vv["targa"], "vehicle_id": vid,
-                              "marca_modello": vv.get("marca_modello"), "days_left": ddl})
+    items += await maintenance_events(vehicles, today, win_m)
     items.sort(key=lambda e: e["date"])
     return items, settings
 
@@ -1726,14 +1844,16 @@ async def apply_plan(plan_id: str, user: dict = Depends(require("manage_policies
         raise HTTPException(status_code=400, detail="Polizza già sospesa")
     if policy.get("suspension_limit_reached") or policy.get("cumulative_suspension_days", 0) >= MAX_SUSPENSION_DAYS:
         raise HTTPException(status_code=400, detail="Limite massimo di sospensione raggiunto")
-    prev = snapshot(v, ["policy"])
+    prev_policy = copy.deepcopy(policy)
     eff = pl.get("suggested_from") or today_iso()
     policy["status"] = "suspended"
     policy["current_suspension_start"] = eff
+    policy["planned_reactivation"] = (pl.get("suggested_until")[:10] if pl.get("suggested_until") else None)
+    policy["reactivation_reminded"] = False
     await db.vehicles.update_one({"id": v["id"]}, {"$set": {"policy": policy}})
     await db.susp_plans.update_one({"id": plan_id}, {"$set": {"status": "applied", "applied_at": now_iso(), "applied_by": user["email"]}})
     await log_op(user, "policy_suspend", "Sospensione copertura (da piano)", v,
-                 f"Copertura sospesa dal {eff} (piano strategia)", {"type": "set", "set": {"policy": prev["policy"]}}, effective_date=eff)
+                 f"Copertura sospesa dal {eff} (piano strategia)", {"type": "set", "set": {"policy": prev_policy}}, effective_date=eff)
     return {"ok": True}
 
 @api_router.post("/strategy/plan/{plan_id}/cancel")
@@ -1836,6 +1956,59 @@ async def latest_checks_map():
             latest[k] = c
     return latest
 
+_CTRL_ORDER = {"overdue": 3, "upcoming": 2, "ok": 1, "never": 0, "none": 0}
+
+def control_status(t: dict, c: Optional[dict], last_km, today: date) -> dict:
+    interval_km = t.get("interval_km")
+    if c:
+        nd = parse_date(c["checked_at"]) + timedelta(days=t["interval_days"])
+        time_state, dl = maint_state(nd, today)
+        last_check = c["checked_at"]; last_check_km = c.get("km"); next_due = nd.isoformat()
+    else:
+        time_state = "never"; dl = None; last_check = None; last_check_km = None; next_due = None
+    km_state = "none"; km_left = None
+    if interval_km and last_check_km is not None and last_km is not None:
+        km_left = int(interval_km) - (int(last_km) - int(last_check_km))
+        if km_left <= 0:
+            km_state = "overdue"
+        elif km_left <= max(1, int(int(interval_km) * 0.1)):
+            km_state = "upcoming"
+        else:
+            km_state = "ok"
+    state = time_state
+    if _CTRL_ORDER.get(km_state, 0) > _CTRL_ORDER.get(state, 0):
+        state = km_state
+    return {"state": state, "time_state": time_state, "km_state": km_state, "days_left": dl,
+            "next_due": next_due, "last_check": last_check, "last_check_km": last_check_km,
+            "interval_km": interval_km, "km_left": km_left}
+
+async def maintenance_events(vehicles: list, today: date, window: int) -> List[dict]:
+    types = await db.maint_types.find({"active": True}).sort("order", 1).to_list(200)
+    if not types:
+        return []
+    latest = await latest_checks_map()
+    vmap = {v["id"]: v for v in vehicles}
+    out = []
+    for (vid, tid), c in latest.items():
+        t = next((x for x in types if x["id"] == tid), None)
+        v = vmap.get(vid)
+        if not t or not v:
+            continue
+        cs = control_status(t, c, v.get("last_km"), today)
+        if cs["state"] not in ("overdue", "upcoming"):
+            continue
+        dl = cs["days_left"] if cs["days_left"] is not None else 0
+        by_km = cs["km_state"] in ("overdue", "upcoming") and cs["time_state"] not in ("overdue", "upcoming")
+        include = (cs["state"] == "overdue") or (cs["time_state"] == "upcoming" and dl <= window) or (cs["km_state"] in ("overdue", "upcoming"))
+        if not include:
+            continue
+        label = f"Controllo: {t['name']}" + (" (soglia km)" if by_km else "")
+        out.append({"date": cs["next_due"] or today.isoformat(), "type": "manutenzione", "label": label,
+                    "state": "expired" if cs["state"] == "overdue" else "upcoming", "targa": v["targa"],
+                    "vehicle_id": vid, "marca_modello": v.get("marca_modello"),
+                    "days_left": (dl if not by_km else (-1 if cs["km_state"] == "overdue" else min(dl, window)))})
+    return out
+
 async def fetch_interventions(vehicle_id=None, status=None, date_from=None, date_to=None):
     q = {}
     if vehicle_id:
@@ -1861,19 +2034,20 @@ async def fetch_interventions(vehicle_id=None, status=None, date_from=None, date
 @api_router.get("/maintenance/types")
 async def list_maint_types(user: dict = Depends(get_current_user)):
     types = await db.maint_types.find({"active": True}).sort("order", 1).to_list(200)
-    return [{"id": t["id"], "name": t["name"], "interval_days": t["interval_days"]} for t in types]
+    return [{"id": t["id"], "name": t["name"], "interval_days": t["interval_days"], "interval_km": t.get("interval_km")} for t in types]
 
 @api_router.post("/maintenance/types")
 async def create_maint_type(input: MaintTypeInput, user: dict = Depends(require("manage_settings"))):
     n = await db.maint_types.count_documents({})
     doc = {"id": str(uuid.uuid4()), "name": input.name, "interval_days": int(input.interval_days),
+           "interval_km": (int(input.interval_km) if input.interval_km else None),
            "order": n, "active": True, "created_at": now_iso()}
     await db.maint_types.insert_one(dict(doc)); doc.pop("_id", None)
     return doc
 
 @api_router.put("/maintenance/types/{type_id}")
 async def update_maint_type(type_id: str, input: MaintTypeInput, user: dict = Depends(require("manage_settings"))):
-    r = await db.maint_types.update_one({"id": type_id}, {"$set": {"name": input.name, "interval_days": int(input.interval_days)}})
+    r = await db.maint_types.update_one({"id": type_id}, {"$set": {"name": input.name, "interval_days": int(input.interval_days), "interval_km": (int(input.interval_km) if input.interval_km else None)}})
     if r.matched_count == 0:
         raise HTTPException(status_code=404, detail="Controllo non trovato")
     return {"ok": True}
@@ -1897,18 +2071,15 @@ async def maintenance_overview(user: dict = Depends(get_current_user)):
         controls = []
         for t in types:
             c = latest.get((v["id"], t["id"]))
-            if c:
-                nd = parse_date(c["checked_at"]) + timedelta(days=t["interval_days"])
-                st, dl = maint_state(nd, today)
-                controls.append({"type_id": t["id"], "type_name": t["name"], "interval_days": t["interval_days"],
-                                 "last_check": c["checked_at"], "next_due": nd.isoformat(), "state": st, "days_left": dl})
-            else:
-                controls.append({"type_id": t["id"], "type_name": t["name"], "interval_days": t["interval_days"],
-                                 "last_check": None, "next_due": None, "state": "never", "days_left": None})
+            cs = control_status(t, c, v.get("last_km"), today)
+            controls.append({"type_id": t["id"], "type_name": t["name"], "interval_days": t["interval_days"],
+                             "interval_km": cs["interval_km"], "last_check": cs["last_check"],
+                             "next_due": cs["next_due"], "state": cs["state"], "days_left": cs["days_left"],
+                             "km_state": cs["km_state"], "km_left": cs["km_left"], "last_check_km": cs["last_check_km"]})
         out.append({"vehicle_id": v["id"], "targa": v["targa"], "marca_modello": v.get("marca_modello"),
                     "tipo": v.get("tipo") or "auto", "last_km": v.get("last_km"),
                     "controls": controls, "open_interventions": open_int.get(v["id"], 0)})
-    return {"types": [{"id": t["id"], "name": t["name"], "interval_days": t["interval_days"]} for t in types], "vehicles": out}
+    return {"types": [{"id": t["id"], "name": t["name"], "interval_days": t["interval_days"], "interval_km": t.get("interval_km")} for t in types], "vehicles": out}
 
 @api_router.post("/maintenance/checks")
 async def add_maint_check(input: MaintCheckInput, user: dict = Depends(require("manage_maintenance"))):
@@ -2220,6 +2391,99 @@ async def cron_strategy_alert(background_tasks: BackgroundTasks, authorization: 
         raise HTTPException(status_code=401, detail="Unauthorized")
     background_tasks.add_task(run_strategy_alert)
     return {"accepted": True}
+
+SYSTEM_USER = {"_id": "system", "email": "system@fleetcare.local", "name": "Sistema (auto)"}
+
+def reactivation_html(company: str, v: dict, date_s: str, used, auto: bool = True, days_left=None) -> str:
+    targa = escape(v.get("targa", "")); modello = escape(v.get("marca_modello", ""))
+    if auto:
+        body = f"Il veicolo <b>{targa}</b> ({modello}) e' stato riattivato automaticamente in data {escape(date_s)}."
+        if used is not None:
+            body += f" Le scadenze di polizza sono state posticipate di {used} giorni, recuperati con il periodo di sospensione."
+        body += " Il veicolo e' nuovamente utilizzabile."
+    else:
+        extra = f" (tra {days_left} giorni)" if days_left is not None else ""
+        body = (f"Il veicolo <b>{targa}</b> ({modello}) sara' riattivato automaticamente il "
+                f"{escape(date_s)}{extra}. Alla riattivazione l'operazione verra' registrata dal sistema.")
+    return (f"<div style='font-family:Arial,sans-serif;color:#0F172A'>"
+            f"<h2 style='color:#2563EB'>{escape(company)}</h2><p style='font-size:15px'>{body}</p>"
+            f"<p style='color:#64748B;font-size:12px'>Messaggio automatico FleetCare.</p></div>")
+
+async def run_auto_reactivate():
+    settings = await get_settings()
+    reminder_days = int(settings.get("reactivation_reminder_days", 7))
+    recipients = [r for r in settings.get("notification_recipients", []) if r]
+    company = settings.get("company_name", "FleetCare Autonoleggio")
+    today = datetime.now(timezone.utc).date()
+    vehicles = await db.vehicles.find({"policy.status": "suspended",
+                                       "policy.planned_reactivation": {"$ne": None}}).to_list(2000)
+    reactivated = 0; reminded = 0
+    for v in vehicles:
+        policy = v.get("policy")
+        pr = parse_date(policy.get("planned_reactivation"))
+        if not pr:
+            continue
+        if pr <= today:
+            prev_policy = copy.deepcopy(policy)
+            start = parse_date(policy["current_suspension_start"])
+            eff = policy["planned_reactivation"][:10]
+            end = parse_date(eff)
+            if end < start:
+                end = today; eff = today.isoformat()
+            days = (end - start).days
+            cumulative = policy.get("cumulative_suspension_days", 0)
+            new_cumulative = min(cumulative + days, MAX_SUSPENSION_DAYS)
+            used = new_cumulative - cumulative
+            policy.setdefault("suspensions", []).append({
+                "id": str(uuid.uuid4()), "suspended_at": policy["current_suspension_start"],
+                "reactivated_at": eff, "days": used, "auto": True})
+            policy["cumulative_suspension_days"] = new_cumulative
+            policy["status"] = "active"; policy["current_suspension_start"] = None
+            policy["planned_reactivation"] = None; policy["reactivation_reminded"] = False
+            if new_cumulative >= MAX_SUSPENSION_DAYS:
+                policy["suspension_limit_reached"] = True
+            contract = parse_date(policy.get("scadenza_contratto"))
+            if contract:
+                policy["scadenza_contratto"] = (contract + timedelta(days=used)).isoformat()
+            rata = parse_date(policy.get("scadenza_rata_intermedia"))
+            if rata:
+                policy["scadenza_rata_intermedia"] = (rata + timedelta(days=used)).isoformat()
+            await db.vehicles.update_one({"id": v["id"]}, {"$set": {"policy": policy}})
+            await log_op(SYSTEM_USER, "policy_reactivate", "Riattivazione automatica", v,
+                         f"Riattivazione automatica dal {eff} · +{used} gg (totale {new_cumulative}/{MAX_SUSPENSION_DAYS}); scadenze posticipate di {used} gg",
+                         {"type": "set", "set": {"policy": prev_policy}}, effective_date=eff)
+            reactivated += 1
+            for r in recipients:
+                try:
+                    await send_email(to=r, subject=f"[{company}] Veicolo {v['targa']} riattivato automaticamente",
+                                     html=reactivation_html(company, v, eff, used, auto=True))
+                except Exception as e:
+                    logger.error(f"auto-reactivate email to {r} failed: {e}")
+        else:
+            dleft = (pr - today).days
+            if dleft <= reminder_days and not policy.get("reactivation_reminded"):
+                await db.vehicles.update_one({"id": v["id"]}, {"$set": {"policy.reactivation_reminded": True}})
+                reminded += 1
+                for r in recipients:
+                    try:
+                        await send_email(to=r, subject=f"[{company}] Riattivazione imminente veicolo {v['targa']}",
+                                         html=reactivation_html(company, v, policy["planned_reactivation"][:10], None, auto=False, days_left=dleft))
+                    except Exception as e:
+                        logger.error(f"reactivate reminder to {r} failed: {e}")
+    return {"reactivated": reactivated, "reminded": reminded}
+
+@api_router.post("/cron/auto-reactivate")
+async def cron_auto_reactivate(background_tasks: BackgroundTasks, authorization: str = Header(None)):
+    secret = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    provided = authorization[7:] if authorization and authorization.startswith("Bearer ") else ""
+    if not secret or not pysecrets.compare_digest(provided, secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    background_tasks.add_task(run_auto_reactivate)
+    return {"accepted": True}
+
+@api_router.post("/policy/auto-reactivate/run")
+async def run_auto_reactivate_now(user: dict = Depends(require("manage_policies"))):
+    return await run_auto_reactivate()
 
 DEFAULT_VEHICLE_TYPES = [("Auto", 0.7), ("Scooter", 1.0), ("Altro", 1.0)]
 

@@ -11,6 +11,7 @@ import VehicleTypesManager from "@/components/VehicleTypesManager";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -32,6 +33,8 @@ export default function Settings() {
   const [seasonStart, setSeasonStart] = useState(4);
   const [seasonEnd, setSeasonEnd] = useState(10);
   const [alertMonth, setAlertMonth] = useState(11);
+  const [reactDays, setReactDays] = useState(7);
+  const [susLetter, setSusLetter] = useState("");
   const [targets, setTargets] = useState({});
   const [vtypes, setVtypes] = useState([]);
   const [sendingAlert, setSendingAlert] = useState(false);
@@ -49,6 +52,8 @@ export default function Settings() {
       setSeasonStart(settings.season_start_month ?? 4);
       setSeasonEnd(settings.season_end_month ?? 10);
       setAlertMonth(settings.strategy_alert_month ?? 11);
+      setReactDays(settings.reactivation_reminder_days ?? 7);
+      setSusLetter(settings.suspension_letter_text || "");
       setTargets(settings.strategy_targets || {});
       setRecipients(settings.notification_recipients?.length ? settings.notification_recipients : [""]);
     }
@@ -75,6 +80,8 @@ export default function Settings() {
         season_start_month: Number(seasonStart),
         season_end_month: Number(seasonEnd),
         strategy_alert_month: Number(alertMonth),
+        reactivation_reminder_days: Number(reactDays),
+        suspension_letter_text: susLetter,
         strategy_targets: Object.fromEntries(Object.entries(targets).map(([k, v]) => [k, Number(v) || 0])),
         notification_recipients: recipients.filter((r) => r.trim()),
       });
@@ -264,6 +271,18 @@ export default function Settings() {
           </Button>
         )}
         <p className="text-xs text-slate-400">L'avviso viene inviato automaticamente il 1° del mese selezionato ai destinatari email configurati.</p>
+        <div className="border-t border-slate-100 pt-4 space-y-3">
+          <div className="space-y-1.5 max-w-xs">
+            <Label className="text-xs text-slate-500">Giorni di anticipo avviso riattivazione</Label>
+            <Input type="number" min="0" value={reactDays} onChange={(e) => setReactDays(e.target.value)} disabled={!canSettings} data-testid="reactivation-reminder-days" />
+            <p className="text-xs text-slate-400">Prima della data di riattivazione automatica il sistema invia un promemoria email; alla data il veicolo si riattiva da solo.</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-slate-500">Testo del modulo di sospensione (PDF)</Label>
+            <Textarea rows={4} value={susLetter} onChange={(e) => setSusLetter(e.target.value)} disabled={!canSettings} placeholder="Corpo della lettera di richiesta sospensione…" data-testid="suspension-letter-text" />
+            <p className="text-xs text-slate-400">Questo testo compare nel modulo PDF di richiesta sospensione, insieme ai dati del veicolo e della polizza.</p>
+          </div>
+        </div>
       </section>
 
       {canSettings && <VehicleTypesManager />}

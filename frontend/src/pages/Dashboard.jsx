@@ -24,6 +24,7 @@ import {
 import { useAuth } from "@/context/AuthContext";
 import VehicleCard from "@/components/VehicleCard";
 import FleetTable from "@/components/FleetTable";
+import Timeline4Weeks from "@/components/Timeline4Weeks";
 import VehicleFormDialog from "@/components/VehicleFormDialog";
 import PolicyDialog from "@/components/PolicyDialog";
 import CollaudoDialog from "@/components/CollaudoDialog";
@@ -96,6 +97,8 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [opportunities, setOpportunities] = useState(0);
   const [filter, setFilter] = useState("all");
+  const [tipo, setTipo] = useState("all");
+  const [vtypes, setVtypes] = useState([]);
   const [sort, setSort] = useState("deadline");
   const [view, setView] = useState("grid");
   const [query, setQuery] = useState("");
@@ -127,6 +130,7 @@ export default function Dashboard() {
   useEffect(() => {
     load();
     api.get("/strategy").then((res) => setOpportunities(res.data.opportunities || 0)).catch(() => {});
+    api.get("/vehicle-types").then((res) => setVtypes(res.data)).catch(() => {});
   }, []);
 
   const filtered = useMemo(() => {
@@ -143,6 +147,7 @@ export default function Dashboard() {
       );
     else if (filter === "suspended") list = list.filter((v) => v.policy?.status === "suspended");
     else if (filter === "bollo") list = list.filter((v) => v.bollo_state === "expired");
+    if (tipo !== "all") list = list.filter((v) => (v.tipo || "Auto") === tipo);
     if (query.trim()) {
       const q = query.toLowerCase();
       list = list.filter((v) => v.targa.toLowerCase().includes(q) || v.marca_modello.toLowerCase().includes(q));
@@ -153,7 +158,7 @@ export default function Dashboard() {
     else if (sort === "modello") sorted.sort((a, b) => a.marca_modello.localeCompare(b.marca_modello));
     else if (sort === "circulation") sorted.sort((a, b) => Number(a.can_circulate) - Number(b.can_circulate));
     return sorted;
-  }, [vehicles, filter, query, sort]);
+  }, [vehicles, filter, query, sort, tipo]);
 
   const syncOpen = (list) => {
     const find = (cur) => (cur ? list.find((x) => x.id === cur.id) || null : null);
@@ -266,9 +271,11 @@ export default function Dashboard() {
         <Kpi icon={CalendarClock} label="Scad. 30 gg" value={stats?.upcoming_30 ?? "—"} tone="amber" testid="kpi-upcoming" />
       </div>
 
+      <Timeline4Weeks />
+
       <div className="flex flex-col lg:flex-row gap-3 lg:items-center justify-between">
         <div className="flex flex-wrap gap-2">
-          {FILTERS.map((f) => (
+          {FILTERS.filter((f) => f.key !== "bollo" || hasPerm("view_bollo")).map((f) => (
             <button
               key={f.key}
               onClick={() => setFilter(f.key)}
@@ -284,6 +291,13 @@ export default function Dashboard() {
           ))}
         </div>
         <div className="flex gap-2 items-center">
+          <Select value={tipo} onValueChange={setTipo}>
+            <SelectTrigger className="w-[150px]" data-testid="fleet-tipo-select"><SelectValue placeholder="Tipologia" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tutte le tipologie</SelectItem>
+              {vtypes.map((t) => (<SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>))}
+            </SelectContent>
+          </Select>
           <Select value={sort} onValueChange={setSort}>
             <SelectTrigger className="w-[190px]" data-testid="fleet-sort-select"><SelectValue /></SelectTrigger>
             <SelectContent>

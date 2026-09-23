@@ -3,6 +3,14 @@ import api, { apiErrorMessage } from "@/lib/api";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { fmtDate, stateCell } from "@/lib/format";
+import { useAuth } from "@/context/AuthContext";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Search, CheckCircle2, XCircle } from "lucide-react";
 
 const COLS = [
@@ -44,14 +52,18 @@ function Donut({ can, cannot }) {
 }
 
 export default function Monitor() {
+  const { hasPerm } = useAuth();
   const [vehicles, setVehicles] = useState([]);
   const [events, setEvents] = useState([]);
   const [query, setQuery] = useState("");
+  const [tipo, setTipo] = useState("all");
+  const [vtypes, setVtypes] = useState([]);
   const [loading, setLoading] = useState(true);
+  const cols = COLS.filter((c) => c.key !== "bollo" || hasPerm("view_bollo"));
 
   useEffect(() => {
-    Promise.all([api.get("/vehicles"), api.get("/deadlines")])
-      .then(([v, e]) => { setVehicles(v.data); setEvents(e.data); })
+    Promise.all([api.get("/vehicles"), api.get("/deadlines"), api.get("/vehicle-types")])
+      .then(([v, e, t]) => { setVehicles(v.data); setEvents(e.data); setVtypes(t.data); })
       .catch((err) => toast.error(apiErrorMessage(err)))
       .finally(() => setLoading(false));
   }, []);
@@ -78,10 +90,14 @@ export default function Monitor() {
   const maxCount = Math.max(1, ...monthBars.map((b) => b.count));
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return vehicles;
-    const q = query.toLowerCase();
-    return vehicles.filter((v) => v.targa.toLowerCase().includes(q) || v.marca_modello.toLowerCase().includes(q));
-  }, [vehicles, query]);
+    let list = vehicles;
+    if (tipo !== "all") list = list.filter((v) => (v.tipo || "Auto") === tipo);
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      list = list.filter((v) => v.targa.toLowerCase().includes(q) || v.marca_modello.toLowerCase().includes(q));
+    }
+    return list;
+  }, [vehicles, query, tipo]);
 
   return (
     <div className="space-y-5">
@@ -90,9 +106,18 @@ export default function Monitor() {
           <h1 className="font-heading text-2xl font-extrabold text-slate-900">Monitor flotta</h1>
           <p className="text-sm text-slate-500">Visione completa: grafici riepilogativi e stato di ogni scadenza.</p>
         </div>
-        <div className="relative sm:w-64">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cerca targa o modello…" className="pl-9" data-testid="monitor-search" />
+        <div className="flex gap-2 items-center">
+          <Select value={tipo} onValueChange={setTipo}>
+            <SelectTrigger className="w-[150px]" data-testid="monitor-tipo-select"><SelectValue placeholder="Tipologia" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tutte le tipologie</SelectItem>
+              {vtypes.map((t) => (<SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>))}
+            </SelectContent>
+          </Select>
+          <div className="relative sm:w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cerca targa o modello…" className="pl-9" data-testid="monitor-search" />
+          </div>
         </div>
       </div>
 
@@ -136,7 +161,7 @@ export default function Monitor() {
               <tr className="bg-slate-900 text-white text-left">
                 <th className="px-4 py-3 font-semibold">Veicolo</th>
                 <th className="px-4 py-3 font-semibold text-center">Circolazione</th>
-                {COLS.map((c) => <th key={c.key} className="px-4 py-3 font-semibold">{c.label}</th>)}
+                {cols.map((c) => <th key={c.key} className="px-4 py-3 font-semibold">{c.label}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -149,7 +174,7 @@ export default function Monitor() {
                   <td className="px-4 py-2.5 text-center">
                     {v.can_circulate ? <CheckCircle2 className="h-5 w-5 text-emerald-600 inline" /> : <XCircle className="h-5 w-5 text-red-500 inline" />}
                   </td>
-                  {COLS.map((c) => {
+                  {cols.map((c) => {
                     const { state, date } = cellData(v, c.key);
                     return (
                       <td key={c.key} className="px-2 py-2.5">

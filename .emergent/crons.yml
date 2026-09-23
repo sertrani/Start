@@ -14,3 +14,10 @@ crons:
     endpoint: "{{BASE_URL}}/api/cron/strategy-alert"
     method: POST
     enabled: true
+  - name: auto-riattivazione
+    description: "Riattiva automaticamente le polizze sospese alla data prevista e invia l'avviso di riattivazione imminente"
+    cron: "0 8 * * *"
+    timezone: "Europe/Rome"
+    endpoint: "{{BASE_URL}}/api/cron/auto-reactivate"
+    method: POST
+    enabled: true

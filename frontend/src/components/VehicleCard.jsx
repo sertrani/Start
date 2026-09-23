@@ -17,10 +17,14 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
 import { fmtDate, eur, POLICY_LABELS, stateBadge } from "@/lib/format";
 
-function Row({ icon: Icon, label, date, state, extra }) {
+function Row({ icon: Icon, label, date, state, extra, onClick }) {
   const b = stateBadge(state);
   return (
-    <div className="flex items-center justify-between py-2 border-t border-slate-100 first:border-0">
+    <div
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      className={`flex items-center justify-between py-2 border-t border-slate-100 first:border-0 ${onClick ? "cursor-pointer hover:bg-slate-50 -mx-1 px-1 rounded" : ""}`}
+    >
       <div className="flex items-center gap-2 min-w-0">
         <Icon className="h-4 w-4 text-slate-400 shrink-0" />
         <div className="min-w-0">
@@ -39,11 +43,24 @@ export default function VehicleCard({ v, onEdit, onPolicy, onCollaudo, onDelete,
   const can = v.can_circulate;
   const tid = v.id.slice(0, 8);
   const docCount = (v.documents || []).length;
+  const showBollo = hasPerm("view_bollo");
   return (
     <div className={`rounded-2xl border bg-white shadow-sm hover:shadow-md transition-shadow overflow-hidden ${can ? "border-emerald-200" : "border-red-200"}`} data-testid={`vehicle-card-${tid}`}>
       <div className={`px-4 py-3 flex items-center justify-between ${can ? "bg-emerald-50" : "bg-red-50"}`}>
-        <div>
-          <span className="font-targa text-sm font-bold uppercase tracking-wider bg-amber-300/30 text-slate-900 border border-amber-400/50 px-2 py-0.5 rounded">{v.targa}</span>
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="font-targa text-sm font-bold uppercase tracking-wider bg-amber-300/30 text-slate-900 border border-amber-400/50 px-2 py-0.5 rounded">{v.targa}</span>
+            {hasPerm("manage_vehicles") && (
+              <>
+                <Button size="icon" variant="ghost" className="h-7 w-7 text-slate-500 hover:text-slate-800" title="Modifica" onClick={() => onEdit(v)} data-testid={`edit-vehicle-button-${tid}`}>
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7 text-slate-500 hover:text-slate-800" title="Duplica" onClick={() => onDuplicate(v)} data-testid={`duplicate-vehicle-button-${tid}`}>
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </>
+            )}
+          </div>
           <p className="text-sm font-semibold text-slate-800 mt-1.5">{v.marca_modello}</p>
           <p className="text-xs text-slate-500">Imm. {fmtDate(v.data_immatricolazione)} · {v.tipo || "Auto"}</p>
         </div>
@@ -54,12 +71,13 @@ export default function VehicleCard({ v, onEdit, onPolicy, onCollaudo, onDelete,
       </div>
 
       <div className="px-4 py-2">
-        <Row icon={Wrench} label="Collaudo / Revisione" date={fmtDate(v.collaudo_deadline)} state={v.collaudo_state} />
+        <Row icon={Wrench} label="Collaudo / Revisione" date={fmtDate(v.collaudo_deadline)} state={v.collaudo_state} onClick={hasPerm("manage_payments") ? () => onCollaudo(v) : undefined} />
         <Row
           icon={ShieldCheck}
           label={v.policy ? `Polizza — ${v.policy.compagnia}${v.policy.numero_polizza ? ` (${v.policy.numero_polizza})` : ""}` : "Polizza assicurativa"}
           date={v.policy ? `${POLICY_LABELS[v.policy.tipologia] || v.policy.tipologia} · scad. ${fmtDate(v.policy.scadenza_contratto)}` : "Non inserita"}
           state={v.insurance_state}
+          onClick={hasPerm("manage_policies") ? () => onPolicy(v) : undefined}
           extra={
             v.policy ? (
               <p className="text-[11px] text-slate-500">
@@ -70,9 +88,11 @@ export default function VehicleCard({ v, onEdit, onPolicy, onCollaudo, onDelete,
           }
         />
         {v.policy?.scadenza_rata_intermedia && (
-          <Row icon={CalendarClock} label="Rata intermedia" date={fmtDate(v.policy.scadenza_rata_intermedia)} state={v.policy.rata_state} />
+          <Row icon={CalendarClock} label="Rata intermedia" date={fmtDate(v.policy.scadenza_rata_intermedia)} state={v.policy.rata_state} onClick={hasPerm("manage_policies") ? () => onPolicy(v) : undefined} />
         )}
-        <Row icon={Receipt} label="Bollo (non blocca la circolazione)" date={v.bollo_scadenza ? fmtDate(v.bollo_scadenza) : "Non inserito"} state={v.bollo_state} />
+        {showBollo && (
+          <Row icon={Receipt} label="Bollo (non blocca la circolazione)" date={v.bollo_scadenza ? fmtDate(v.bollo_scadenza) : "Non inserito"} state={v.bollo_state} onClick={hasPerm("manage_payments") ? () => onBollo(v) : undefined} />
+        )}
         {v.note && (
           <div className="flex items-start gap-2 pt-2 border-t border-slate-100 mt-1" data-testid={`vehicle-note-${tid}`}>
             <StickyNote className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
@@ -92,9 +112,11 @@ export default function VehicleCard({ v, onEdit, onPolicy, onCollaudo, onDelete,
             <Button size="sm" variant="ghost" className="h-8 px-2 text-slate-600" onClick={() => onCollaudo(v)} data-testid={`register-collaudo-button-${tid}`}>
               <Wrench className="h-3.5 w-3.5 mr-1" /> Collaudo
             </Button>
-            <Button size="sm" variant="ghost" className="h-8 px-2 text-slate-600" onClick={() => onBollo(v)} data-testid={`bollo-button-${tid}`}>
-              <Receipt className="h-3.5 w-3.5 mr-1" /> Bollo
-            </Button>
+            {showBollo && (
+              <Button size="sm" variant="ghost" className="h-8 px-2 text-slate-600" onClick={() => onBollo(v)} data-testid={`bollo-button-${tid}`}>
+                <Receipt className="h-3.5 w-3.5 mr-1" /> Bollo
+              </Button>
+            )}
           </>
         )}
         {hasPerm("manage_vehicles") && (
@@ -105,16 +127,6 @@ export default function VehicleCard({ v, onEdit, onPolicy, onCollaudo, onDelete,
         <Button size="sm" variant="ghost" className="h-8 px-2 text-slate-600" onClick={() => onHistory(v)} data-testid={`history-button-${tid}`}>
           <Clock className="h-3.5 w-3.5 mr-1" /> Storico
         </Button>
-        {hasPerm("manage_vehicles") && (
-          <Button size="sm" variant="ghost" className="h-8 px-2 text-slate-600" onClick={() => onDuplicate(v)} data-testid={`duplicate-vehicle-button-${tid}`}>
-            <Copy className="h-3.5 w-3.5" />
-          </Button>
-        )}
-        {hasPerm("manage_vehicles") && (
-          <Button size="sm" variant="ghost" className="h-8 px-2 text-slate-600" onClick={() => onEdit(v)} data-testid={`edit-vehicle-button-${tid}`}>
-            <Pencil className="h-3.5 w-3.5" />
-          </Button>
-        )}
         {hasPerm("delete_operations") && (
           <Button size="sm" variant="ghost" className="h-8 px-2 text-red-500 hover:text-red-600 hover:bg-red-50 ml-auto" onClick={() => onDelete(v)} data-testid={`delete-vehicle-button-${tid}`}>
             <Trash2 className="h-3.5 w-3.5" />
