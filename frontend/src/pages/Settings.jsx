@@ -7,6 +7,7 @@ import AuthImage from "@/components/AuthImage";
 import UsersManager from "@/components/UsersManager";
 import LoginLog from "@/components/LoginLog";
 import MaintenanceTypesManager from "@/components/MaintenanceTypesManager";
+import VehicleTypesManager from "@/components/VehicleTypesManager";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,7 +32,8 @@ export default function Settings() {
   const [seasonStart, setSeasonStart] = useState(4);
   const [seasonEnd, setSeasonEnd] = useState(10);
   const [alertMonth, setAlertMonth] = useState(11);
-  const [targets, setTargets] = useState({ auto: 0, furgone: 0, altro: 0 });
+  const [targets, setTargets] = useState({});
+  const [vtypes, setVtypes] = useState([]);
   const [sendingAlert, setSendingAlert] = useState(false);
   const [recipients, setRecipients] = useState([""]);
   const [saving, setSaving] = useState(false);
@@ -42,22 +44,19 @@ export default function Settings() {
   useEffect(() => {
     if (settings) {
       setCompany(settings.company_name || "");
-      setDays(settings.notification_days || { bollo: 30, collaudo: 30, polizza: 30 });
+      setDays(settings.notification_days || { bollo: 30, collaudo: 30, polizza: 30, manutenzione: 15 });
       setBellDays(settings.bell_days ?? 7);
       setSeasonStart(settings.season_start_month ?? 4);
       setSeasonEnd(settings.season_end_month ?? 10);
       setAlertMonth(settings.strategy_alert_month ?? 11);
-      setTargets({
-        auto: settings.strategy_target_auto ?? 0,
-        furgone: settings.strategy_target_furgone ?? 0,
-        altro: settings.strategy_target_altro ?? 0,
-      });
+      setTargets(settings.strategy_targets || {});
       setRecipients(settings.notification_recipients?.length ? settings.notification_recipients : [""]);
     }
   }, [settings]);
 
   useEffect(() => {
     api.get("/notifications/preview").then((res) => setPreview(res.data)).catch(() => {});
+    api.get("/vehicle-types").then((res) => setVtypes(res.data)).catch(() => {});
   }, [settings]);
 
   const setRecipient = (i, val) => {
@@ -71,14 +70,12 @@ export default function Settings() {
     try {
       await api.put("/settings", {
         company_name: company,
-        notification_days: { bollo: Number(days.bollo), collaudo: Number(days.collaudo), polizza: Number(days.polizza) },
+        notification_days: { bollo: Number(days.bollo), collaudo: Number(days.collaudo), polizza: Number(days.polizza), manutenzione: Number(days.manutenzione ?? 15) },
         bell_days: Number(bellDays),
         season_start_month: Number(seasonStart),
         season_end_month: Number(seasonEnd),
         strategy_alert_month: Number(alertMonth),
-        strategy_target_auto: Number(targets.auto),
-        strategy_target_furgone: Number(targets.furgone),
-        strategy_target_altro: Number(targets.altro),
+        strategy_targets: Object.fromEntries(Object.entries(targets).map(([k, v]) => [k, Number(v) || 0])),
         notification_recipients: recipients.filter((r) => r.trim()),
       });
       toast.success("Impostazioni salvate");
@@ -120,7 +117,7 @@ export default function Settings() {
     }
   };
 
-  const REM = [["bollo", "Bollo"], ["collaudo", "Collaudo"], ["polizza", "Polizza / Rata"]];
+  const REM = [["bollo", "Bollo"], ["collaudo", "Collaudo"], ["polizza", "Polizza / Rata"], ["manutenzione", "Manutenzione"]];
 
   const sendAlert = async () => {
     setSendingAlert(true);
@@ -244,19 +241,13 @@ export default function Settings() {
       <section className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
         <h2 className="flex items-center gap-2 font-heading font-semibold text-slate-800"><Lightbulb className="h-4 w-4 text-amber-500" /> Strategia sospensioni</h2>
         <p className="text-sm text-slate-500">Fabbisogno di veicoli per tipo in bassa stagione (usato per consigliare l'eccedenza da sospendere) e mese di invio dell'avviso email.</p>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl">
-          <div className="space-y-1.5">
-            <Label className="text-xs text-slate-500">Auto necessarie</Label>
-            <Input type="number" min="0" value={targets.auto} onChange={(e) => setTargets({ ...targets, auto: e.target.value })} disabled={!canSettings} data-testid="strategy-target-auto" />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-slate-500">Furgoni necessari</Label>
-            <Input type="number" min="0" value={targets.furgone} onChange={(e) => setTargets({ ...targets, furgone: e.target.value })} disabled={!canSettings} data-testid="strategy-target-furgone" />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-slate-500">Altri necessari</Label>
-            <Input type="number" min="0" value={targets.altro} onChange={(e) => setTargets({ ...targets, altro: e.target.value })} disabled={!canSettings} data-testid="strategy-target-altro" />
-          </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-3xl">
+          {vtypes.map((t) => (
+            <div className="space-y-1.5" key={t.id}>
+              <Label className="text-xs text-slate-500">{t.name} necessari</Label>
+              <Input type="number" min="0" value={targets[t.name] ?? ""} onChange={(e) => setTargets({ ...targets, [t.name]: e.target.value })} disabled={!canSettings} placeholder="0" data-testid={`strategy-target-${t.name}`} />
+            </div>
+          ))}
           <div className="space-y-1.5">
             <Label className="text-xs text-slate-500">Mese avviso email</Label>
             <Select value={String(alertMonth)} onValueChange={(v) => setAlertMonth(Number(v))} disabled={!canSettings}>
@@ -275,6 +266,7 @@ export default function Settings() {
         <p className="text-xs text-slate-400">L'avviso viene inviato automaticamente il 1° del mese selezionato ai destinatari email configurati.</p>
       </section>
 
+      {canSettings && <VehicleTypesManager />}
       {canSettings && <MaintenanceTypesManager />}
 
       {canSettings && (

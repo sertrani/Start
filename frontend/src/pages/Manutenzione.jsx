@@ -12,10 +12,11 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { fmtDate, eur, TIPO_LABELS } from "@/lib/format";
+import { fmtDate, eur } from "@/lib/format";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import {
   Wrench, CheckCircle2, XCircle, Clock, Plus, ClipboardCheck, ListTodo, BarChart3,
-  FileSpreadsheet, FileText, Trash2, Loader2, ClipboardList, Gauge,
+  FileSpreadsheet, FileText, Trash2, Loader2, ClipboardList, Gauge, Paperclip,
 } from "lucide-react";
 
 const CTRL_STATE = {
@@ -85,7 +86,7 @@ function ControlliTab({ overview, onOpenSheet }) {
               <ClipboardList className="h-4 w-4 text-slate-400" />
             </div>
             <p className="text-sm font-semibold text-slate-800 mt-2">{v.marca_modello}</p>
-            <p className="text-xs text-slate-500">{TIPO_LABELS[v.tipo] || "Auto"}{v.last_km != null ? ` · ${v.last_km.toLocaleString("it-IT")} km` : ""}</p>
+            <p className="text-xs text-slate-500">{v.tipo || "Auto"}{v.last_km != null ? ` · ${v.last_km.toLocaleString("it-IT")} km` : ""}</p>
             <div className="mt-3 flex items-center gap-2 flex-wrap">
               {worst ? (
                 <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${CTRL_STATE[worst.state].cls}`}>{worst.type_name}: {CTRL_STATE[worst.state].label}</span>
@@ -145,7 +146,7 @@ function VehicleControlsDialog({ vehicle, canMaint, hasPerm, onOpenChange, onSav
             {vehicle.marca_modello}
           </DialogTitle>
           <DialogDescription>
-            {TIPO_LABELS[vehicle.tipo] || "Auto"}{vehicle.last_km != null ? ` · ultimo km rilevato: ${vehicle.last_km.toLocaleString("it-IT")}` : " · nessun km registrato"}
+            {vehicle.tipo || "Auto"}{vehicle.last_km != null ? ` · ultimo km rilevato: ${vehicle.last_km.toLocaleString("it-IT")}` : " · nessun km registrato"}
           </DialogDescription>
         </DialogHeader>
 
@@ -204,6 +205,8 @@ function VehicleControlsDialog({ vehicle, canMaint, hasPerm, onOpenChange, onSav
             </div>
           )}
         </div>
+
+        <KmChart vehicleId={vehicle.vehicle_id} />
       </DialogContent>
 
       {checkTarget && (
@@ -291,6 +294,28 @@ function InterventiTab({ canMaint, vehicles, hasPerm, onChanged }) {
     }
   };
 
+  const uploadAttachment = async (id, file) => {
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      await api.post(`/maintenance/interventions/${id}/attachment`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+      toast.success("Allegato caricato");
+      load();
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    }
+  };
+
+  const viewAttachment = async (id, a) => {
+    try {
+      const res = await api.get(`/maintenance/interventions/${id}/attachment/${a.id}`, { responseType: "blob" });
+      window.open(window.URL.createObjectURL(res.data), "_blank");
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    }
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -316,6 +341,17 @@ function InterventiTab({ canMaint, vehicles, hasPerm, onChanged }) {
                     : <span className="inline-flex items-center gap-1 text-[11px] text-amber-700"><Clock className="h-3.5 w-3.5" /> Da fare</span>}
                 </div>
                 {it.note && <p className="text-xs text-slate-500 mt-1">{it.note}</p>}
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  {(it.attachments || []).map((a) => (
+                    <button key={a.id} onClick={() => viewAttachment(it.id, a)} className="text-[11px] text-blue-600 hover:underline inline-flex items-center gap-1" data-testid={`interv-att-view-${a.id.slice(0, 6)}`}><Paperclip className="h-3 w-3" />{a.filename}</button>
+                  ))}
+                  {canMaint && (
+                    <label className="text-[11px] text-slate-500 hover:text-blue-600 cursor-pointer inline-flex items-center gap-1" data-testid={`interv-att-upload-${it.id.slice(0, 8)}`}>
+                      <Paperclip className="h-3 w-3" /> Allega foto/fattura
+                      <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={(e) => uploadAttachment(it.id, e.target.files[0])} />
+                    </label>
+                  )}
+                </div>
               </div>
               <div className="flex gap-1.5 shrink-0">
                 {canMaint && it.status === "open" && <Button size="sm" variant="outline" onClick={() => setCompleteTarget(it)} data-testid={`interv-complete-${it.id.slice(0, 8)}`}>Segna fatto</Button>}
@@ -408,6 +444,28 @@ function CompleteInterventionDialog({ item, onOpenChange, onSaved }) {
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function KmChart({ vehicleId }) {
+  const [pts, setPts] = useState([]);
+  useEffect(() => { api.get(`/vehicles/${vehicleId}/km-history`).then((r) => setPts(r.data)).catch(() => {}); }, [vehicleId]);
+  if (!pts.length) return null;
+  return (
+    <div className="space-y-2 mt-2" data-testid="km-chart">
+      <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5"><Gauge className="h-4 w-4" /> Andamento km</h3>
+      <div className="h-48 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={pts} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+            <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+            <YAxis tick={{ fontSize: 10 }} width={48} />
+            <Tooltip formatter={(v) => `${Number(v).toLocaleString("it-IT")} km`} />
+            <Line type="monotone" dataKey="km" stroke="#2563eb" strokeWidth={2} dot={{ r: 3 }} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
   );
 }
 

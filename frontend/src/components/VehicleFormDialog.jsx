@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -18,7 +18,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { TIPO_LABELS } from "@/lib/format";
 import api, { apiErrorMessage } from "@/lib/api";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
@@ -30,11 +29,13 @@ export default function VehicleFormDialog({ open, onOpenChange, vehicle, onSaved
     marca_modello: vehicle?.marca_modello || "",
     data_immatricolazione: duplicate ? "" : vehicle?.data_immatricolazione?.slice(0, 10) || "",
     bollo_scadenza: duplicate ? "" : vehicle?.bollo_scadenza?.slice(0, 10) || "",
-    tipo: vehicle?.tipo || "auto",
+    tipo: vehicle?.tipo || "Auto",
     costo_collaudo: vehicle?.costo_collaudo ?? "",
     note: vehicle?.note || "",
   });
   const [loading, setLoading] = useState(false);
+  const [types, setTypes] = useState([]);
+  useEffect(() => { api.get("/vehicle-types").then((r) => setTypes(r.data)).catch(() => {}); }, []);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
   const submit = async (e) => {
@@ -90,8 +91,8 @@ export default function VehicleFormDialog({ open, onOpenChange, vehicle, onSaved
               <Select value={form.tipo} onValueChange={(v) => setForm({ ...form, tipo: v })}>
                 <SelectTrigger data-testid="vehicle-tipo-select"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {Object.entries(TIPO_LABELS).map(([k, v]) => (
-                    <SelectItem key={k} value={k}>{v}</SelectItem>
+                  {types.map((t) => (
+                    <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

@@ -304,6 +304,7 @@ class NotificationDays(BaseModel):
     bollo: int = 30
     collaudo: int = 30
     polizza: int = 30
+    manutenzione: int = 15
 
 class SettingsInput(BaseModel):
     company_name: Optional[str] = None
@@ -313,9 +314,7 @@ class SettingsInput(BaseModel):
     season_start_month: int = Field(4, ge=1, le=12)
     season_end_month: int = Field(10, ge=1, le=12)
     strategy_alert_month: int = Field(11, ge=1, le=12)
-    strategy_target_auto: int = Field(0, ge=0, le=999)
-    strategy_target_furgone: int = Field(0, ge=0, le=999)
-    strategy_target_altro: int = Field(0, ge=0, le=999)
+    strategy_targets: dict = {}
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -330,6 +329,10 @@ class UserUpdate(BaseModel):
 
 class PasswordResetInput(BaseModel):
     password: str
+
+class VehicleTypeInput(BaseModel):
+    name: str = Field(..., max_length=60)
+    weight: float = Field(1.0, ge=0.0, le=1.0)
 
 class MaintTypeInput(BaseModel):
     name: str = Field(..., max_length=120)
@@ -520,9 +523,9 @@ async def get_settings() -> dict:
     s.setdefault("season_start_month", 4)
     s.setdefault("season_end_month", 10)
     s.setdefault("strategy_alert_month", 11)
-    s.setdefault("strategy_target_auto", 0)
-    s.setdefault("strategy_target_furgone", 0)
-    s.setdefault("strategy_target_altro", 0)
+    s.setdefault("strategy_targets", {})
+    if "manutenzione" not in s.get("notification_days", {}):
+        s.setdefault("notification_days", {})["manutenzione"] = 15
     return s
 
 # ---------------- Audit ----------------
@@ -1231,9 +1234,10 @@ def next_peak_prep(today: date) -> date:
     cand = date(today.year, 7, 1) - timedelta(days=15)
     return cand if today < cand else date(today.year + 1, 7, 1) - timedelta(days=15)
 
-def strategy_for_vehicle(view: dict, phase: str, today: date, start_m: int, until: Optional[date] = None) -> dict:
+def strategy_for_vehicle(view: dict, phase: str, today: date, start_m: int, until: Optional[date] = None, type_weights: Optional[dict] = None) -> dict:
     p = view.get("policy")
-    tipo = view.get("tipo") or "auto"
+    tipo = view.get("tipo") or "Auto"
+    tw = (type_weights or {}).get(tipo, 1.0)
     base = {"vehicle_id": view["id"], "targa": view["targa"], "marca_modello": view.get("marca_modello"),
             "tipo": tipo, "can_circulate": view.get("can_circulate")}
     if not p:
@@ -1275,10 +1279,10 @@ def strategy_for_vehicle(view: dict, phase: str, today: date, start_m: int, unti
     else:
         reasons.append("Stagione di spalla: richiesta moderata, valuta caso per caso.")
 
-    if tipo != "auto" and phase != "peak":
-        reasons.append(f"Fuori dal picco servono soprattutto auto: questo mezzo ({tipo}) è un buon candidato alla sospensione.")
-    elif tipo == "auto":
-        reasons.append("È un'auto: potrebbe servire anche fuori dal picco, valuta la reale necessità.")
+    if tw >= 1.0 and phase != "peak":
+        reasons.append(f"Fuori dal picco questo mezzo ({tipo}) è un buon candidato alla sospensione.")
+    elif tw < 1.0:
+        reasons.append(f"{tipo}: mezzo prioritario, potrebbe servire anche fuori dal picco.")
 
     econ = 0.0
     if upcoming:
@@ -1293,7 +1297,7 @@ def strategy_for_vehicle(view: dict, phase: str, today: date, start_m: int, unti
         if dt.month in (start_m, (start_m - 1) or 12):
             reasons.append("L'esborso cade a inizio stagione, periodo di scarsa liquidità: meglio pianificarlo ad attività avviata.")
 
-    type_demand = min(100.0, PHASE_DEMAND.get(phase, 45.0) * TIPO_WEIGHT.get(tipo, 1.0))
+    type_demand = min(100.0, PHASE_DEMAND.get(phase, 45.0) * tw)
     score = 0.55 * econ + 0.45 * type_demand
     if phase == "peak":
         score *= 0.2
@@ -1347,13 +1351,15 @@ async def compute_strategy(until_s: Optional[str] = None, needs: Optional[dict] 
     today = datetime.now(timezone.utc).date()
     phase = season_phase(today, start_m, end_m)
     until = parse_date(until_s) if until_s else None
+    vtypes = await db.vehicle_types.find({"active": True}).to_list(200)
+    type_weights = {t["name"]: t.get("weight", 1.0) for t in vtypes}
     planned_vids = {pl["vehicle_id"] for pl in await db.susp_plans.find({"status": "planned"}).to_list(2000)}
     vehicles = await db.vehicles.find().to_list(2000)
     items = []
     for v in vehicles:
         if v.get("policy"):
             normalize_policy_suspension(v["policy"])
-        it = strategy_for_vehicle(build_vehicle_view(v), phase, today, start_m, until)
+        it = strategy_for_vehicle(build_vehicle_view(v), phase, today, start_m, until, type_weights)
         it["planned"] = it["vehicle_id"] in planned_vids
         it["surplus"] = False
         items.append(it)
@@ -1372,7 +1378,7 @@ async def compute_strategy(until_s: Optional[str] = None, needs: Optional[dict] 
                     it["surplus"] = True
                     if it["level"] in ("low", "medium"):
                         it["level"] = "high"; it["recommendation"] = "Sospendi (eccedenza)"
-                    it["reasons"] = [f"Fabbisogno stagionale: servono {int(need)} {TIPO_LABEL_IT.get(tipo, tipo)}, attivi {active} → {surplus} da sospendere."] + it["reasons"]
+                    it["reasons"] = [f"Fabbisogno stagionale: servono {int(need)} {tipo}, attivi {active} → {surplus} da sospendere."] + it["reasons"]
                 elif not it["blockers"]:
                     it["level"] = "low"; it["recommendation"] = "Mantieni (necessario)"
     items.sort(key=lambda x: (0 if x.get("surplus") else 1, -x["score"]))
@@ -1387,14 +1393,16 @@ async def compute_strategy(until_s: Optional[str] = None, needs: Optional[dict] 
             "targets": needs or {}}
 
 @api_router.get("/strategy")
-async def strategy(until: Optional[str] = Query(None), need_auto: Optional[int] = Query(None),
-                   need_furgone: Optional[int] = Query(None), need_altro: Optional[int] = Query(None),
+async def strategy(until: Optional[str] = Query(None), needs: Optional[str] = Query(None),
                    user: dict = Depends(get_current_user)):
-    needs = {}
-    if need_auto is not None: needs["auto"] = need_auto
-    if need_furgone is not None: needs["furgone"] = need_furgone
-    if need_altro is not None: needs["altro"] = need_altro
-    return await compute_strategy(until, needs or None)
+    import json as _json
+    parsed = None
+    if needs:
+        try:
+            parsed = {str(k): int(v) for k, v in _json.loads(needs).items()}
+        except Exception:
+            parsed = None
+    return await compute_strategy(until, parsed or None)
 
 def vehicle_events(view: dict) -> List[dict]:
     ev = []
@@ -1544,14 +1552,12 @@ async def update_settings(input: SettingsInput, user: dict = Depends(require("ma
     await db.settings.update_one({"key": "app"}, {"$set": {
         "company_name": input.company_name or "FleetCare Autonoleggio",
         "notification_recipients": recipients,
-        "notification_days": {"bollo": max(1, nd.bollo), "collaudo": max(1, nd.collaudo), "polizza": max(1, nd.polizza)},
+        "notification_days": {"bollo": max(1, nd.bollo), "collaudo": max(1, nd.collaudo), "polizza": max(1, nd.polizza), "manutenzione": max(1, nd.manutenzione)},
         "bell_days": max(0, int(input.bell_days)),
         "season_start_month": int(input.season_start_month),
         "season_end_month": int(input.season_end_month),
         "strategy_alert_month": int(input.strategy_alert_month),
-        "strategy_target_auto": int(input.strategy_target_auto),
-        "strategy_target_furgone": int(input.strategy_target_furgone),
-        "strategy_target_altro": int(input.strategy_target_altro),
+        "strategy_targets": {str(k): int(v) for k, v in (input.strategy_targets or {}).items()},
     }}, upsert=True)
     return await get_settings()
 
@@ -1588,6 +1594,22 @@ async def compute_digest():
             if days_left <= window:
                 ev["days_left"] = days_left
                 items.append(ev)
+    win_m = nd.get("manutenzione", 15)
+    mtypes = await db.maint_types.find({"active": True}).to_list(200)
+    if mtypes:
+        latest = await latest_checks_map()
+        vmap = {x["id"]: x for x in vehicles}
+        for (vid, tid), c in latest.items():
+            t = next((x for x in mtypes if x["id"] == tid), None)
+            vv = vmap.get(vid)
+            if not t or not vv:
+                continue
+            nd_due = parse_date(c["checked_at"]) + timedelta(days=t["interval_days"])
+            ddl = (nd_due - today).days
+            if ddl <= win_m:
+                items.append({"date": nd_due.isoformat(), "type": "manutenzione", "label": f"Controllo: {t['name']}",
+                              "state": "expired" if ddl < 0 else "upcoming", "targa": vv["targa"], "vehicle_id": vid,
+                              "marca_modello": vv.get("marca_modello"), "days_left": ddl})
     items.sort(key=lambda e: e["date"])
     return items, settings
 
@@ -1900,8 +1922,7 @@ async def add_maint_check(input: MaintCheckInput, user: dict = Depends(require("
            "km": input.km, "note": input.note,
            "user_email": user["email"], "user_name": user.get("name"), "created_at": now_iso()}
     await db.maint_checks.insert_one(dict(doc)); doc.pop("_id", None)
-    if input.km is not None:
-        await db.vehicles.update_one({"id": input.vehicle_id}, {"$set": {"last_km": int(input.km)}})
+    await update_last_km(input.vehicle_id, input.km)
     esito = "OK" if outcome == "ok" else "KO"
     km_txt = f" · {input.km} km" if input.km is not None else ""
     await log_op(user, "maint_check", "Controllo effettuato", v,
@@ -1956,8 +1977,7 @@ async def complete_intervention(iid: str, input: InterventionCompleteInput, user
         set_doc["km"] = int(input.km)
     await db.maint_interventions.update_one({"id": iid}, {"$set": set_doc})
     v = await db.vehicles.find_one({"id": it["vehicle_id"]})
-    if input.km is not None:
-        await db.vehicles.update_one({"id": it["vehicle_id"]}, {"$set": {"last_km": int(input.km)}})
+    await update_last_km(it["vehicle_id"], input.km)
     km_txt = f" · {input.km} km" if input.km is not None else ""
     await log_op(user, "intervention_done", "Intervento effettuato",
                  {"id": it["vehicle_id"], "targa": (v or {}).get("targa"), "marca_modello": (v or {}).get("marca_modello")},
@@ -2170,11 +2190,7 @@ async def run_strategy_alert(force: bool = False):
     today = datetime.now(timezone.utc).date()
     if not force and (today.day != 1 or today.month != int(settings.get("strategy_alert_month", 11))):
         return {"sent": 0, "reason": "non è la data di invio configurata"}
-    needs = {}
-    for tp in ("auto", "furgone", "altro"):
-        val = settings.get(f"strategy_target_{tp}")
-        if val:
-            needs[tp] = int(val)
+    needs = {str(k): int(v) for k, v in (settings.get("strategy_targets") or {}).items() if v}
     data = await compute_strategy(needs=needs or None)
     to_susp = [i for i in data["items"] if i["policy"] and i["policy"].get("can_suspend")
                and (i.get("surplus") or i["level"] == "high") and not i.get("planned")]
@@ -2204,6 +2220,90 @@ async def cron_strategy_alert(background_tasks: BackgroundTasks, authorization: 
         raise HTTPException(status_code=401, detail="Unauthorized")
     background_tasks.add_task(run_strategy_alert)
     return {"accepted": True}
+
+DEFAULT_VEHICLE_TYPES = [("Auto", 0.7), ("Scooter", 1.0), ("Altro", 1.0)]
+
+async def seed_vehicle_types():
+    if await db.vehicle_types.count_documents({}) == 0:
+        for i, (n, w) in enumerate(DEFAULT_VEHICLE_TYPES):
+            await db.vehicle_types.insert_one({"id": str(uuid.uuid4()), "name": n, "weight": w,
+                                               "order": i, "active": True, "created_at": now_iso()})
+
+async def update_last_km(vehicle_id, km):
+    if km is None:
+        return
+    v = await db.vehicles.find_one({"id": vehicle_id})
+    cur = (v or {}).get("last_km")
+    if cur is None or int(km) >= int(cur):
+        await db.vehicles.update_one({"id": vehicle_id}, {"$set": {"last_km": int(km)}})
+
+@api_router.get("/vehicle-types")
+async def list_vehicle_types(user: dict = Depends(get_current_user)):
+    t = await db.vehicle_types.find({"active": True}).sort("order", 1).to_list(200)
+    return [{"id": x["id"], "name": x["name"], "weight": x.get("weight", 1.0)} for x in t]
+
+@api_router.post("/vehicle-types")
+async def create_vehicle_type(input: VehicleTypeInput, user: dict = Depends(require("manage_settings"))):
+    n = await db.vehicle_types.count_documents({})
+    doc = {"id": str(uuid.uuid4()), "name": input.name, "weight": input.weight, "order": n, "active": True, "created_at": now_iso()}
+    await db.vehicle_types.insert_one(dict(doc)); doc.pop("_id", None)
+    return doc
+
+@api_router.put("/vehicle-types/{tid}")
+async def update_vehicle_type(tid: str, input: VehicleTypeInput, user: dict = Depends(require("manage_settings"))):
+    old = await db.vehicle_types.find_one({"id": tid})
+    if not old:
+        raise HTTPException(status_code=404, detail="Tipo non trovato")
+    await db.vehicle_types.update_one({"id": tid}, {"$set": {"name": input.name, "weight": input.weight}})
+    if old["name"] != input.name:
+        await db.vehicles.update_many({"tipo": old["name"]}, {"$set": {"tipo": input.name}})
+    return {"ok": True}
+
+@api_router.delete("/vehicle-types/{tid}")
+async def delete_vehicle_type(tid: str, user: dict = Depends(require("manage_settings"))):
+    await db.vehicle_types.update_one({"id": tid}, {"$set": {"active": False}})
+    return {"ok": True}
+
+@api_router.get("/vehicles/{vehicle_id}/km-history")
+async def km_history(vehicle_id: str, user: dict = Depends(get_current_user)):
+    pts = []
+    for c in await db.maint_checks.find({"vehicle_id": vehicle_id}).to_list(20000):
+        if c.get("km") is not None:
+            pts.append({"date": c["checked_at"], "km": c["km"], "source": f"Controllo {c.get('type_name', '')}"})
+    for it in await db.maint_interventions.find({"vehicle_id": vehicle_id, "status": "done"}).to_list(20000):
+        if it.get("km") is not None:
+            pts.append({"date": it.get("done_at"), "km": it["km"], "source": "Intervento"})
+    pts = [p for p in pts if p.get("date")]
+    pts.sort(key=lambda p: p["date"])
+    return pts
+
+@api_router.post("/maintenance/interventions/{iid}/attachment")
+async def upload_intervention_attachment(iid: str, file: UploadFile = File(...), user: dict = Depends(require("manage_maintenance"))):
+    it = await db.maint_interventions.find_one({"id": iid})
+    if not it:
+        raise HTTPException(status_code=404, detail="Intervento non trovato")
+    ext = (file.filename.rsplit(".", 1)[-1] if "." in file.filename else "bin").lower()
+    if ext not in ALLOWED_DOC_EXT:
+        raise HTTPException(status_code=400, detail="Formato non consentito (PDF, JPG, PNG, WEBP)")
+    data = await file.read()
+    path = f"{APP_NAME}/interventions/{iid}/{uuid.uuid4()}.{ext}"
+    ct = MIME_TYPES.get(ext, file.content_type or "application/octet-stream")
+    result = put_object(path, data, ct)
+    att = {"id": str(uuid.uuid4()), "filename": file.filename, "storage_path": result["path"],
+           "content_type": ct, "uploaded_at": now_iso()}
+    await db.maint_interventions.update_one({"id": iid}, {"$push": {"attachments": att}})
+    return att
+
+@api_router.get("/maintenance/interventions/{iid}/attachment/{att_id}")
+async def get_intervention_attachment(iid: str, att_id: str, user: dict = Depends(get_current_user)):
+    it = await db.maint_interventions.find_one({"id": iid})
+    if not it:
+        raise HTTPException(status_code=404, detail="Intervento non trovato")
+    att = next((a for a in it.get("attachments", []) if a["id"] == att_id), None)
+    if not att:
+        raise HTTPException(status_code=404, detail="Allegato non trovato")
+    content, ct = get_object(att["storage_path"])
+    return StreamingResponse(io.BytesIO(content), media_type=ct)
 
 app.include_router(api_router)
 app.add_middleware(CORSMiddleware, allow_credentials=True,
@@ -2236,6 +2336,11 @@ async def startup():
             await db.users.update_one({"email": admin_email}, {"$set": upd})
     await get_settings()
     await seed_maint_types()
+    await seed_vehicle_types()
+    for old, new in (("auto", "Auto"), ("furgone", "Altro"), ("altro", "Altro")):
+        await db.vehicles.update_many({"tipo": old}, {"$set": {"tipo": new}})
+    await db.vehicles.update_many({"$or": [{"tipo": {"$exists": False}}, {"tipo": None}, {"tipo": ""}]},
+                                  {"$set": {"tipo": "Auto"}})
     await db.maint_checks.create_index([("vehicle_id", 1), ("type_id", 1)])
     await db.maint_interventions.create_index("vehicle_id")
     await db.susp_plans.create_index("vehicle_id")

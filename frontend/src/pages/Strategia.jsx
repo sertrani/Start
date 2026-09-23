@@ -15,7 +15,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { fmtDate, eur, TIPO_LABELS } from "@/lib/format";
+import { fmtDate, eur } from "@/lib/format";
 import {
   Lightbulb, PauseCircle, Sun, Snowflake, CloudSun, TrendingDown, AlertTriangle,
   CheckCircle2, BookmarkPlus, PlayCircle, XCircle, Trash2, FileSpreadsheet, FileText, Sparkles,
@@ -219,7 +219,7 @@ export default function Strategia() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-targa text-sm font-bold uppercase tracking-wider bg-amber-300/30 text-slate-900 border border-amber-400/50 px-2 py-0.5 rounded">{it.targa}</span>
                         <span className="text-sm font-semibold text-slate-800">{it.marca_modello}</span>
-                        <span className="text-xs text-slate-500">{TIPO_LABELS[it.tipo] || "Auto"}</span>
+                        <span className="text-xs text-slate-500">{it.tipo || "Auto"}</span>
                         {it.planned && <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 rounded" data-testid={`strategy-planned-${tid}`}>IN PIANO</span>}
                       </div>
                       <div className="mt-2 flex items-center gap-2 flex-wrap">

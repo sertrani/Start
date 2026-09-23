@@ -1,6 +1,6 @@
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
-import { fmtDate, POLICY_LABELS, TIPO_LABELS, stateBadge } from "@/lib/format";
+import { fmtDate, POLICY_LABELS, stateBadge } from "@/lib/format";
 import {
   CheckCircle2,
   XCircle,
@@ -46,7 +46,7 @@ export default function FleetTable({ vehicles, onEdit, onPolicy, onCollaudo, onD
                 </td>
                 <td className="px-3 py-3">
                   <p className="font-medium text-slate-800">{v.marca_modello}</p>
-                  <p className="text-xs text-slate-500">{TIPO_LABELS[v.tipo] || "Auto"} · Imm. {fmtDate(v.data_immatricolazione)}</p>
+                  <p className="text-xs text-slate-500">{v.tipo || "Auto"} · Imm. {fmtDate(v.data_immatricolazione)}</p>
                 </td>
                 <td className="px-3 py-3">
                   {v.can_circulate ? (

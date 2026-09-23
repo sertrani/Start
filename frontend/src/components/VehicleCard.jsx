@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
-import { fmtDate, eur, POLICY_LABELS, TIPO_LABELS, stateBadge } from "@/lib/format";
+import { fmtDate, eur, POLICY_LABELS, stateBadge } from "@/lib/format";
 
 function Row({ icon: Icon, label, date, state, extra }) {
   const b = stateBadge(state);
@@ -45,7 +45,7 @@ export default function VehicleCard({ v, onEdit, onPolicy, onCollaudo, onDelete,
         <div>
           <span className="font-targa text-sm font-bold uppercase tracking-wider bg-amber-300/30 text-slate-900 border border-amber-400/50 px-2 py-0.5 rounded">{v.targa}</span>
           <p className="text-sm font-semibold text-slate-800 mt-1.5">{v.marca_modello}</p>
-          <p className="text-xs text-slate-500">Imm. {fmtDate(v.data_immatricolazione)} · {TIPO_LABELS[v.tipo] || "Auto"}</p>
+          <p className="text-xs text-slate-500">Imm. {fmtDate(v.data_immatricolazione)} · {v.tipo || "Auto"}</p>
         </div>
         <div className={`flex flex-col items-center gap-1 ${can ? "text-emerald-700" : "text-red-600"}`} data-testid={`circulation-badge-${tid}`}>
           {can ? <CheckCircle2 className="h-7 w-7" /> : <XCircle className="h-7 w-7" />}

@@ -28,8 +28,12 @@ export const FRAZIONAMENTO_LABELS = {
 
 export const TIPO_LABELS = {
   auto: "Auto",
+  Auto: "Auto",
+  scooter: "Scooter",
+  Scooter: "Scooter",
   furgone: "Furgone / Commerciale",
   altro: "Altro",
+  Altro: "Altro",
 };
 
 export const DOC_LABELS = {
