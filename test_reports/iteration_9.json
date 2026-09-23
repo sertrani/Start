@@ -1,0 +1,23 @@
+{
+  "summary": "Frontend E2E tested for Iteration 9 Maintenance Controls Sheet flow. All new UI features work: Controlli grid, VehicleControlsDialog with OK/KO buttons, check dialog with optional km (prefilled from last known), OK/KO recording, KO auto-chaining an intervention dialog prefilled with vehicle (locked) and description, history table with OK/KO/km/operator, Excel & PDF export, vehicle card shows last known km, intervention completion with km field, filters and Stats tab regression. No issues found.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Manutenzione.jsx is ~410 lines - still under threshold but growing. Consider extracting VehicleControlsDialog / CheckDialog / AddInterventionDialog / CompleteInterventionDialog into separate files for future maintainability.",
+    "KM prefill on the very first OK check for a vehicle without prior km is empty (expected behavior). After the first km recorded, subsequent check dialogs correctly prefill with last km."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped)", "frontend": "100%"},
+  "test_credentials": "Admin sertrani@gmail.com / fleet2026 (unchanged, per instructions)",
+  "seed_data_creation": "Created 2 OK checks + 1 KO check on vehicle AB123CD (Olio motore); created 1 intervention (auto from KO) and completed it with cost 120,50€ and km 85.100. Cleanup not performed (per note it's fine to leave on existing vehicles).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "AB123CD now has: 3 storico controlli rows (2 OK + 1 KO on Olio motore) and 1 completed intervention (cost 120,50€, km 85.100). Vehicle last_km = 85.000 (set by KO check) but intervention completion set km 85.100 - verify whether last_km should update on intervention completion too. Controlli/Interventi/Stats all work. Console clean.",
+  "rca of the issue": "N/A - no issues found."
+}
